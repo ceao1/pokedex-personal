@@ -1,6 +1,7 @@
 import type {
   Card,
   Identificacion,
+  OtraCarta,
   OwnedCopy,
   OwnedCopyIn,
   Pokemon,
@@ -35,6 +36,13 @@ export function fetchPokedex(): Promise<Pokemon[]> {
 
 export function fetchPokemon(dexNumber: number): Promise<PokemonDetail> {
   return get<PokemonDetail>(`/pokedex/${dexNumber}`);
+}
+
+/** Las últimas páginas del binder: ejemplares cuya carta no es de los 151.
+ * Mismo `no-store` que el resto de `get`, para que el riel y esta pantalla
+ * nunca muestren un conteo viejo tras registrar una carta. */
+export function fetchOtrasCartas(): Promise<OtraCarta[]> {
+  return get<OtraCarta[]>("/otras-cartas");
 }
 
 // Las escrituras de captura corren en el navegador, no en el servidor de

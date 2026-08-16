@@ -5,9 +5,10 @@ type Props = {
   total: number;
   conseguidos: number;
   costoRestanteUsd: number;
+  otrasCartasCount: number;
 };
 
-export function Rail({ total, conseguidos, costoRestanteUsd }: Props) {
+export function Rail({ total, conseguidos, costoRestanteUsd, otrasCartasCount }: Props) {
   const porcentaje = total === 0 ? 0 : Math.round((conseguidos / total) * 100);
 
   return (
@@ -33,6 +34,15 @@ export function Rail({ total, conseguidos, costoRestanteUsd }: Props) {
         <p className={styles.hint}>
           Te faltan {total - conseguidos} de los 151 originales.
         </p>
+        {/* Un enlace a una lista vacía es ruido: no aparece si no hay
+            ninguna carta fuera del proyecto. También es la puerta que
+            cierra el agujero -- quien registre una la encuentra desde
+            acá, sin tener que saber que existe la URL. */}
+        {otrasCartasCount > 0 && (
+          <Link href="/otras" className={styles.otras}>
+            Otras cartas ({otrasCartasCount})
+          </Link>
+        )}
       </section>
 
       <section className={styles.money}>

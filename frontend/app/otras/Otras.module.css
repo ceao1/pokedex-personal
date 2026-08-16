@@ -1,0 +1,108 @@
+.pantalla {
+  max-inline-size: 900px;
+  inline-size: 100%;
+  margin-inline: auto;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.volver {
+  align-self: flex-start;
+  font-size: var(--step-0);
+  color: var(--stock-dim);
+}
+
+.volver:hover,
+.volver:focus-visible {
+  color: var(--stock);
+}
+
+.cabecera {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.titulo {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 800;
+  font-size: var(--step-3);
+  letter-spacing: -0.02em;
+}
+
+.subtitulo {
+  font-size: var(--step-0);
+  color: var(--stock-dim);
+}
+
+/* Misma retícula que el binder -- tres columnas, mismo espaciado -- pero
+   sin la paginación fija a 3x3 de Binder.module.css: acá no hay casilleros
+   vacíos que rellenar, así que las filas crecen tanto como haga falta en
+   vez de encajar en una sola pantalla. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--gap);
+}
+
+@media (max-width: 899px) {
+  .pantalla {
+    padding: 1rem;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Pie de cada bolsillo: mismo degradado y tokens que Pocket.module.css,
+   pero en dos líneas -- el nombre de la carta y su set/número no caben en
+   una sola fila corta como el "004" del dex. */
+.plate {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0.6rem;
+  background: linear-gradient(
+    to top,
+    rgb(6 11 20 / 0.94) 0%,
+    rgb(6 11 20 / 0.94) 65%,
+    rgb(6 11 20 / 0) 100%
+  );
+}
+
+.nombre {
+  font-size: var(--step-0);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detalle,
+.precio {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vacia {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-inline-size: 46ch;
+  margin-block-start: 1rem;
+  padding: 1.5rem;
+  border: 1px dashed color-mix(in srgb, var(--sleeve-edge) 55%, transparent);
+  border-radius: var(--radius);
+  color: var(--stock-dim);
+}

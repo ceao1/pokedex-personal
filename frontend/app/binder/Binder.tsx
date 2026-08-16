@@ -8,7 +8,9 @@ import styles from "./Binder.module.css";
 
 const POR_PAGINA = 9;
 
-export function Binder({ pokedex }: { pokedex: Pokemon[] }) {
+type Props = { pokedex: Pokemon[]; otrasCartasCount: number };
+
+export function Binder({ pokedex, otrasCartasCount }: Props) {
   const [pagina, setPagina] = useState(0);
   const paginas = Math.ceil(pokedex.length / POR_PAGINA);
 
@@ -32,7 +34,12 @@ export function Binder({ pokedex }: { pokedex: Pokemon[] }) {
 
   return (
     <div className={styles.shell}>
-      <Rail total={pokedex.length} conseguidos={conseguidos} costoRestanteUsd={costoRestante} />
+      <Rail
+        total={pokedex.length}
+        conseguidos={conseguidos}
+        costoRestanteUsd={costoRestante}
+        otrasCartasCount={otrasCartasCount}
+      />
 
       <main className={styles.spread}>
         <div className={styles.grid} key={pagina}>

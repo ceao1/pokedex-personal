@@ -1,9 +1,9 @@
 import { Binder } from "./binder/Binder";
-import { fetchPokedex } from "./lib/api";
+import { fetchOtrasCartas, fetchPokedex } from "./lib/api";
 
 export default async function Home() {
   try {
-    const pokedex = await fetchPokedex();
+    const [pokedex, otrasCartas] = await Promise.all([fetchPokedex(), fetchOtrasCartas()]);
     if (pokedex.length === 0) {
       return (
         <main style={{ padding: "3rem", maxWidth: "42ch" }}>
@@ -15,7 +15,7 @@ export default async function Home() {
         </main>
       );
     }
-    return <Binder pokedex={pokedex} />;
+    return <Binder pokedex={pokedex} otrasCartasCount={otrasCartas.length} />;
   } catch {
     return (
       <main style={{ padding: "3rem", maxWidth: "42ch" }}>

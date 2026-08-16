@@ -51,6 +51,27 @@ export type PokemonDetail = Pokemon & {
   copies: OwnedCopyDetail[];
 };
 
+/** Un ejemplar cuya carta no pertenece al proyecto de los 151, tal como lo
+ * devuelve `GET /otras-cartas`: de otra generación, sin `dex_number` en el
+ * catálogo, o sin carta identificada todavía. `photo_url` es la foto propia
+ * ya firmada; `image_url` es el arte del catálogo, el respaldo cuando no
+ * hay foto propia. */
+export type OtraCarta = {
+  id: number;
+  card_id: string | null;
+  card_name: string | null;
+  set_name: string | null;
+  local_id: string | null;
+  dex_number: number | null;
+  image_url: string | null;
+  variant_label: string | null;
+  condition: string | null;
+  purchase_price_usd: number | null;
+  photo_url: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
 export type Variant = {
   id: string;
   type: string;
