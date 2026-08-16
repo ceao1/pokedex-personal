@@ -15,7 +15,8 @@ export function Rail({ total, conseguidos, costoRestanteUsd }: Props) {
         <span className={styles.lens} aria-hidden="true" />
         <h1 className={styles.title}>
           Pokédex
-          <br />
+          <br className={styles.titleBreak} />
+          <span className={styles.titleSpace}> </span>
           viviente
         </h1>
       </header>

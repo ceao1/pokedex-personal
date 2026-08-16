@@ -58,7 +58,15 @@
   align-items: baseline;
   gap: 0.4rem;
   padding: 0.55rem 0.6rem;
-  background: linear-gradient(to top, rgb(6 11 20 / 0.94), rgb(6 11 20 / 0));
+  /* Meseta sólida bajo el texto: una carta conseguida no lleva filtro
+     de gris que baje el brillo del arte, así que el degradado no puede
+     depender solo del borde inferior para dar contraste AA. */
+  background: linear-gradient(
+    to top,
+    rgb(6 11 20 / 0.94) 0%,
+    rgb(6 11 20 / 0.94) 65%,
+    rgb(6 11 20 / 0) 100%
+  );
 }
 
 .dex {
@@ -80,7 +88,10 @@
 .price {
   font-family: var(--font-data), monospace;
   font-size: var(--step--1);
-  color: var(--shell);
+  /* --shell (el rojo de carcasa) va solo en superficies grandes o
+     texto >= 18px; a 12px se distingue del nombre por peso, no por matiz. */
+  color: var(--stock);
+  font-weight: 600;
 }
 
 .sheen {

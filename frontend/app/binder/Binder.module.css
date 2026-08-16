@@ -59,7 +59,12 @@
 
 @media (max-width: 899px) {
   .shell {
-    grid-template-columns: 1fr;
+    /* Un contenedor de grid le da a .rail una fila propia del tamaño
+       exacto de su contenido: no hay scroll "de sobra" dentro de esa
+       celda, así que position: sticky en el riel no tiene efecto.
+       Con flujo normal en bloque, .rail se pega contra el scroll real
+       de la página. */
+    display: block;
   }
 
   .spread {
