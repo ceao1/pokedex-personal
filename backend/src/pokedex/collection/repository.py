@@ -15,7 +15,8 @@ from .models import OwnedCopy, OwnedCopyIn
 _COLUMNS = """
     id, client_draft_id, card_id, variant_id, variant_label, condition,
     photo_front_url, photo_thumb_url, purchase_price_usd, source_type,
-    binder_id, page, capture_status, lifecycle_status, notes, created_at
+    binder_id, page, capture_status, lifecycle_status, notes, dex_number,
+    created_at
 """
 
 _INSERT_BORRADOR = """
@@ -46,10 +47,17 @@ order by created_at
 """
 
 # Ejemplares de un Pokémon puntual, para la ficha (spec: "varios ejemplares
-# por Pokémon"). Se une con `card` por `dex_number` de la carta -- no del
-# ejemplar, que no lo tiene -- y trae ya el nombre, el set, el arte, la
-# rareza y el `local_id` de esa carta, para que la ficha se dibuje sin una
-# segunda consulta. Excluye las vendidas: una carta que ya no está en el
+# por Pokémon"). `left join` (no `join`) a propósito: un ejemplar puede
+# colgar de este casillero por su propio `dex_number` (task "identificar por
+# lo impreso en la carta" -- especie confirmada, carta exacta desconocida)
+# sin tener `card_id` todavía. `coalesce(c.dex_number, o.dex_number)` -- la
+# carta manda cuando existe, el valor propio del ejemplar es el respaldo --
+# es la misma regla en `wishlist.repository` (`owned_count`) y en
+# `listar_fuera_del_151`, abajo: que las tres diverjan sería reabrir el
+# agujero negro que ya cerró `listar_fuera_del_151`. Trae ya el nombre, el
+# set, el arte, la rareza y el `local_id` de la carta cuando existe, para
+# que la ficha se dibuje sin una segunda consulta -- todo `null` si no hay
+# carta todavía. Excluye las vendidas: una carta que ya no está en el
 # binder no es un ejemplar que el dueño "tiene".
 _LISTAR_POR_DEX = """
 select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id,
@@ -57,8 +65,8 @@ select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id,
        o.purchase_price_usd, o.photo_front_url, o.photo_thumb_url,
        o.notes, o.created_at
 from app.owned_copy o
-join app.card c on c.id = o.card_id
-where c.dex_number = %(dex_number)s
+left join app.card c on c.id = o.card_id
+where coalesce(c.dex_number, o.dex_number) = %(dex_number)s
   and o.lifecycle_status <> 'vendida'
 -- `created_at` es hora de transacción: varios ejemplares insertados en la
 -- misma transacción comparten el mismo valor. `id` desempata de forma
@@ -81,6 +89,7 @@ _PATCH_FIELDS = (
     "capture_status",
     "lifecycle_status",
     "notes",
+    "dex_number",
 )
 
 
@@ -142,19 +151,25 @@ def listar_por_dex(conn: Connection, dex_number: int) -> list[dict]:
     return conn.execute(_LISTAR_POR_DEX, {"dex_number": dex_number}).fetchall()
 
 
-# El binder recorre `app.pokemon` (151 filas): un ejemplar cuya carta no
-# tiene un dex_number entre 1 y 151 no aparece en ninguna consulta ahí y se
+# El binder recorre `app.pokemon` (151 filas): un ejemplar cuyo dex_number
+# efectivo (`coalesce(c.dex_number, o.dex_number)` -- ver `_LISTAR_POR_DEX`,
+# arriba) no cae entre 1 y 151 no aparece en ninguna consulta ahí y se
 # esfuma en silencio -- el agujero negro que esta consulta cierra. `left
 # join` a `app.card` (no `join`) a propósito: un ejemplar sin `card_id`
-# todavía (capturado con foto y precio, sin resolver) también queda fuera
-# del proyecto y tiene que aparecer, y un `join` liso lo excluiría.
+# todavía (capturado con foto y precio, sin resolver, y sin `dex_number`
+# propio tampoco) también queda fuera del proyecto y tiene que aparecer, y
+# un `join` liso lo excluiría.
 _LISTAR_FUERA_DEL_151 = """
-select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id, c.dex_number,
+select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id,
+       coalesce(c.dex_number, o.dex_number) as dex_number,
        c.image_url, o.variant_label, o.condition, o.purchase_price_usd,
        o.photo_front_url, o.photo_thumb_url, o.notes, o.created_at
 from app.owned_copy o
 left join app.card c on c.id = o.card_id
-where (c.dex_number is null or c.dex_number not between 1 and 151)
+where (
+    coalesce(c.dex_number, o.dex_number) is null
+    or coalesce(c.dex_number, o.dex_number) not between 1 and 151
+  )
   and o.lifecycle_status <> 'vendida'
 order by o.created_at desc, o.id desc
 """

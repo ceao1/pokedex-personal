@@ -290,9 +290,11 @@ def test_listar_fuera_del_151_sin_carta_no_trae_arte_del_catalogo(clean_db):
 
 def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
     """El test que impide que vuelva a existir el agujero negro: un ejemplar
-    en cada una de las cuatro situaciones posibles, y ninguno puede faltar
-    ni contarse dos veces al sumar el binder ("dentro") y otras cartas
-    ("fuera")."""
+    en cada una de las cinco situaciones posibles, y ninguno puede faltar ni
+    contarse dos veces al sumar el binder ("dentro") y otras cartas
+    ("fuera"). La quinta -- `dex_number` propio, sin `card_id` -- es la que
+    agrega la task "identificar por lo impreso en la carta": el set puede
+    quedar vacío si la especie ya se identificó bien."""
     from uuid import uuid4
 
     # dentro de los 151
@@ -306,6 +308,7 @@ def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
     otra_generacion = uuid4()
     sin_dex = uuid4()
     sin_carta = uuid4()
+    dentro_por_dex_propio = uuid4()
     vendida = uuid4()
     id_dentro = clean_db.execute(
         "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-004')"
@@ -326,6 +329,10 @@ def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
         "insert into app.owned_copy (client_draft_id) values (%s) returning id",
         (sin_carta,),
     ).fetchone()["id"]
+    id_dentro_por_dex_propio = clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, dex_number) values (%s, 4) returning id",
+        (dentro_por_dex_propio,),
+    ).fetchone()["id"]
     clean_db.execute(
         """
         insert into app.owned_copy (client_draft_id, card_id, lifecycle_status)
@@ -337,7 +344,7 @@ def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
     total_no_vendidas = clean_db.execute(
         "select count(*) as n from app.owned_copy where lifecycle_status <> 'vendida'"
     ).fetchone()["n"]
-    assert total_no_vendidas == 4, "sanity check del fixture"
+    assert total_no_vendidas == 5, "sanity check del fixture"
 
     # El lado "dentro" es la consulta real del binder (`owned_count` de
     # `wishlist.repository.list_pokedex`, que camina las 151 filas de
@@ -346,12 +353,53 @@ def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
     binder_total = sum(p["owned_count"] for p in wishlist_repository.list_pokedex(clean_db))
     fuera_del_151 = repository.listar_fuera_del_151(clean_db)
 
-    assert binder_total == 1
+    assert binder_total == 2, "el de dex_number propio también cuelga de su casillero"
     # Identidades, no solo cantidades: dos fallas que se cancelan (un
     # ejemplar perdido y otro contado dos veces) sumarían igual y este test
     # tiene que detectarlo igual.
     assert {e["id"] for e in fuera_del_151} == {id_otra_generacion, id_sin_dex, id_sin_carta}
     assert id_dentro not in {e["id"] for e in fuera_del_151}
+    assert id_dentro_por_dex_propio not in {e["id"] for e in fuera_del_151}
     assert binder_total + len(fuera_del_151) == total_no_vendidas, (
         "ningún ejemplar puede quedar en tierra de nadie ni contarse dos veces"
     )
+
+
+# --- Task "identificar por lo impreso en la carta": owned_copy.dex_number ---
+
+
+def test_un_ejemplar_sin_carta_pero_con_especie_cuelga_de_su_casillero(clean_db):
+    """Lo que pidió el dueño: "permite que el set quede vacío, si es posible
+    identificarlo bien, si no no pasa nada". Un ejemplar con `dex_number`
+    propio (44, Gloom) y sin `card_id` cuenta en el casillero 44 y no
+    aparece en "Otras cartas"."""
+    from uuid import uuid4
+
+    draft = uuid4()
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, dex_number) values (%s, 44)", (draft,)
+    )
+
+    ejemplares_del_casillero = repository.listar_por_dex(clean_db, 44)
+    assert len(ejemplares_del_casillero) == 1
+    assert ejemplares_del_casillero[0]["card_id"] is None
+
+    assert repository.listar_fuera_del_151(clean_db) == []
+
+
+def test_la_carta_manda_sobre_el_dex_number_propio_cuando_las_dos_existen(clean_db):
+    """Si el ejemplar tiene `card_id` Y `dex_number` propio (ej. quedó de
+    una inferencia anterior a resolverse la carta), el casillero de la
+    carta es el que cuenta -- `coalesce(card.dex_number, owned_copy.
+    dex_number)` prioriza la carta, no el respaldo."""
+    from uuid import uuid4
+
+    _sembrar_pokemon_y_carta(clean_db, 4, "sv03.5-004", "Charmander", "004")
+    draft = uuid4()
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id, dex_number) values (%s, %s, %s)",
+        (draft, "sv03.5-004", 44),
+    )
+
+    assert len(repository.listar_por_dex(clean_db, 4)) == 1
+    assert repository.listar_por_dex(clean_db, 44) == []

@@ -151,10 +151,15 @@ select p.dex_number,
        count(w.id) filter (where w.card_id is null) as sin_resolver,
        -- Ejemplares en posesión, excluyendo los vendidos. Subconsulta escalar
        -- y no join: un join multiplicaría las filas ya agrupadas por p.dex_number.
+       -- `left join` + `coalesce(oc.dex_number, o.dex_number)`, no `oc.
+       -- dex_number` liso: un ejemplar puede colgar de este casillero por su
+       -- propio dex_number (especie confirmada, carta exacta desconocida
+       -- todavía -- ver `collection/repository.py`) sin tener `card_id`, y
+       -- un `join` liso lo perdería en silencio.
        (select count(*)
           from app.owned_copy o
-          join app.card oc on oc.id = o.card_id
-         where oc.dex_number = p.dex_number
+          left join app.card oc on oc.id = o.card_id
+         where coalesce(oc.dex_number, o.dex_number) = p.dex_number
            and o.lifecycle_status <> 'vendida') as owned_count,
        (select c.image_url from app.card c where c.id = ({_CARTA_ELEGIDA})) as primary_image_url,
        (select c.name from app.card c where c.id = ({_CARTA_ELEGIDA})) as primary_card_name,

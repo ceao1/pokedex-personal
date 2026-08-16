@@ -20,6 +20,13 @@ class OwnedCopyIn(BaseModel):
     capture_status: str | None = None
     lifecycle_status: str | None = None
     notes: str | None = None
+    # El casillero del 151 al que cuelga este ejemplar cuando su carta
+    # exacta (set y número) no se conoce todavía, o nunca se conoce (spec de
+    # la task: "permite que el set quede vacío, si es posible identificarlo
+    # bien"). La carta manda cuando existe -- ver `coalesce(card.dex_number,
+    # owned_copy.dex_number)` en `collection/repository.py` y
+    # `wishlist/repository.py`.
+    dex_number: int | None = None
 
 
 class OwnedCopy(BaseModel):
@@ -38,4 +45,5 @@ class OwnedCopy(BaseModel):
     capture_status: str
     lifecycle_status: str
     notes: str | None
+    dex_number: int | None
     created_at: datetime
