@@ -50,12 +50,22 @@ def db_conn():
 
 @pytest.fixture()
 def clean_db(db_conn):
-    db_conn.execute("truncate app.card, app.pokemon, app.wishlist_item cascade")
+    db_conn.execute(
+        "truncate app.card, app.pokemon, app.wishlist_item, app.owned_copy, app.binder cascade"
+    )
     db_conn.commit()
     yield db_conn
     # Trunca también al final: si no, lo que el último test dejó commiteado
     # (ej. `conn.commit()` dentro de un `ImportService.import_workbook`)
     # sobrevive a `db_conn`'s rollback-on-exit y contamina la próxima corrida
     # de la suite completa.
-    db_conn.execute("truncate app.card, app.pokemon, app.wishlist_item cascade")
+    #
+    # Si el test dejó la transacción abortada (ej. probó una violación de
+    # constraint con `pytest.raises` sin volver a hacer rollback), el
+    # truncate de abajo fallaría con `InFailedSqlTransaction`: se hace
+    # rollback primero, que es un no-op si la transacción ya estaba limpia.
+    db_conn.rollback()
+    db_conn.execute(
+        "truncate app.card, app.pokemon, app.wishlist_item, app.owned_copy, app.binder cascade"
+    )
     db_conn.commit()
