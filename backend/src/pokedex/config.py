@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # una URL firmada con loopback es imposible de usar y la foto nunca sube.
     # Vacía = misma que `supabase_url`, que es lo correcto en escritorio.
     storage_public_url: str = ""
+    # Sin esto, `/captures/{id}/identificar` responde 503 y el registro a
+    # mano sigue funcionando igual: la identificación por foto es opcional,
+    # nunca un requisito para usar la app.
+    gemini_api: str = ""
+    gemini_model: str = "gemini-3.5-flash"
 
 
 settings = Settings()
