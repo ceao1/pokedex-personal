@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Pokemon } from "../lib/types";
 import { Pocket } from "./Pocket";
 import { Rail } from "./Rail";
@@ -17,6 +17,15 @@ export function Binder({ pokedex }: { pokedex: Pokemon[] }) {
   });
 
   const conseguidos = pokedex.filter((p) => p.wishlist_count > 0).length;
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "ArrowLeft") setPagina((p) => Math.max(0, p - 1));
+      if (event.key === "ArrowRight") setPagina((p) => Math.min(paginas - 1, p + 1));
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [paginas]);
 
   return (
     <div className={styles.shell}>
