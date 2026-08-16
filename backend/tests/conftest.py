@@ -50,6 +50,6 @@ def db_conn():
 
 @pytest.fixture()
 def clean_db(db_conn):
-    db_conn.execute("truncate app.card cascade")
+    db_conn.execute("truncate app.card, app.pokemon, app.wishlist_item cascade")
     db_conn.commit()
     return db_conn
