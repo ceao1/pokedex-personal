@@ -1995,8 +1995,14 @@ Expected: todo PASS, sin hallazgos de lint
 - [ ] **Step 11: Prueba manual de punta a punta**
 
 ```bash
-cd backend && uv run uvicorn pokedex.api.main:app --reload
+cd backend && uv run uvicorn pokedex.api.main:app --reload --app-dir src
 ```
+
+`--app-dir src` es obligatorio y no decorativo. En macOS los archivos `.pth` de
+`site-packages` terminan con el flag `UF_HIDDEN`, y `site.addpackage` de Python
+salta los `.pth` ocultos, así que la instalación editable no pone `src` en
+`sys.path`. Los tests lo sortean con `pythonpath` en la configuración de pytest
+(Task 1); uvicorn necesita su propio equivalente.
 
 En otra terminal:
 
