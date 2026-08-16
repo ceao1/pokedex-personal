@@ -18,6 +18,10 @@ class PokemonOut(BaseModel):
     primary_image_url: str | None
     primary_card_name: str | None
     primary_price_usd: float | None
+    # Spec §11/§15: todo precio de mercado se muestra con la fecha en que se
+    # congeló (D5: nunca se refresca), para que la vista pueda avisar de la
+    # antigüedad en vez de mostrar un número sin sostén.
+    primary_price_captured_at: str | None
 
 
 class WishlistItemOut(BaseModel):
@@ -36,6 +40,9 @@ class WishlistItemOut(BaseModel):
     rarity: str | None
     set_name: str | None
     price_usd: float | None
+    # Ídem primary_price_captured_at en PokemonOut: la fecha del precio
+    # congelado de esta opción puntual.
+    price_captured_at: str | None
 
 
 class PokemonDetailOut(PokemonOut):
@@ -52,7 +59,12 @@ def _to_float(row: dict) -> dict:
     for campo in ("reference_value_usd", "price_usd", "primary_price_usd"):
         if salida.get(campo) is not None:
             salida[campo] = float(salida[campo])
-    salida.pop("price_captured_at", None)
+    # Spec §11/§15: la fecha del precio congelado se expone, no se descarta.
+    # Serializada a ISO 8601 porque los DTO la declaran `str`, igual que el
+    # resto de la API.
+    for campo in ("price_captured_at", "primary_price_captured_at"):
+        if salida.get(campo) is not None:
+            salida[campo] = salida[campo].isoformat()
     return salida
 
 

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -76,6 +78,21 @@ def test_get_pokedex_trae_el_precio_como_float(sembrado):
     assert por_dex[1]["wishlist_count"] == 1
 
 
+def test_get_pokedex_trae_la_fecha_del_precio_congelado(sembrado):
+    """Spec §11/§15: todo precio de mercado debe traer la fecha en que se
+    congeló, porque nunca se refresca (D5). Sin fecha es un dato que el
+    sistema no puede sostener."""
+    with TestClient(app) as client:
+        body = client.get("/pokedex").json()
+    por_dex = {p["dex_number"]: p for p in body}
+    fecha = por_dex[1]["primary_price_captured_at"]
+    assert fecha is not None
+    assert isinstance(fecha, str)
+    # ISO 8601, igual que el resto de la API -- debe poder re-parsearse.
+    datetime.fromisoformat(fecha)
+    assert por_dex[2]["primary_price_captured_at"] is None
+
+
 def test_el_contador_de_conseguidos_no_miente(sembrado):
     """`owned_count` es lo que el dashboard muestra como progreso del 151.
     Tener rutas de caza no es tener la carta: con una wishlist sembrada y sin
@@ -98,6 +115,14 @@ def test_get_pokedex_de_un_pokemon_trae_sus_opciones(sembrado):
     assert body["options"][0]["price_usd"] == 0.25
 
 
+def test_get_pokemon_detail_trae_la_fecha_del_precio_por_opcion(sembrado):
+    with TestClient(app) as client:
+        body = client.get("/pokedex/1").json()
+    fecha = body["options"][0]["price_captured_at"]
+    assert fecha is not None
+    datetime.fromisoformat(fecha)
+
+
 def test_un_dex_inexistente_devuelve_404(sembrado):
     with TestClient(app) as client:
         assert client.get("/pokedex/999").status_code == 404
@@ -108,3 +133,11 @@ def test_get_wishlist_devuelve_los_items(sembrado):
         body = client.get("/wishlist").json()
     assert len(body) == 1
     assert body[0]["source_option"] == "opcion_1"
+
+
+def test_get_wishlist_trae_la_fecha_del_precio(sembrado):
+    with TestClient(app) as client:
+        body = client.get("/wishlist").json()
+    fecha = body[0]["price_captured_at"]
+    assert fecha is not None
+    datetime.fromisoformat(fecha)
