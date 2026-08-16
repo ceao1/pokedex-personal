@@ -120,6 +120,12 @@ class ResolucionTanda(BaseModel):
     "se reutiliza entero")."""
 
     resoluciones: list[ResolucionCarta] = []
+    # La lectura cruda que produjo cada resolución, en el mismo orden y con
+    # el mismo índice que `resoluciones` -- lo que la pantalla de
+    # confirmación necesita cuando `resoluciones[i].card` es `None`: algo
+    # que mostrarle al dueño para corregir a mano (igual que `reconocido` en
+    # la respuesta de `POST /captures/{id}/identificar`).
+    lecturas: list[Recognition] = []
     # Cuántas cartas devolvió la identificación, para que la pantalla lo
     # contraste contra lo que el dueño dijo que había (spec del plan).
     total_encontradas: int
@@ -309,6 +315,7 @@ class CardResolver:
         resoluciones = [await self.resolver(lectura) for lectura in lecturas]
         return ResolucionTanda(
             resoluciones=resoluciones,
+            lecturas=lecturas,
             total_encontradas=len(lecturas),
             excede_limite=len(lecturas) > MAX_TANDA,
         )

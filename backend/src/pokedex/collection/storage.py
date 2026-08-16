@@ -44,6 +44,15 @@ class StoragePort(Protocol):
         self, paths: list[str], seconds: int = 3600
     ) -> dict[str, str | None]: ...
 
+    async def upload(self, path: str, data: bytes, content_type: str) -> None:
+        """Sube bytes directo, sin la firma navegador-a-bucket de
+        `create_signed_upload`. Existe para la foto de una tanda de compra
+        (Task 4): esa foto llega al backend en el cuerpo del `POST
+        /compras/{id}/tanda` -- no hay celular subiendo por su cuenta al
+        bucket como en el flujo de una sola carta -- así que el backend, que
+        ya tiene la llave secreta, la sube él mismo."""
+        ...
+
 
 class SupabaseStorage:
     def __init__(
@@ -92,6 +101,14 @@ class SupabaseStorage:
         )
         response.raise_for_status()
         return f"{self._public_base}/{response.json()['signedURL'].lstrip('/')}"
+
+    async def upload(self, path: str, data: bytes, content_type: str) -> None:
+        response = await self._client.post(
+            f"{self._base}/object/{self._bucket}/{path}",
+            headers={**self._headers, "Content-Type": content_type},
+            content=data,
+        )
+        response.raise_for_status()
 
     async def signed_download_urls(
         self, paths: list[str], seconds: int = 3600
@@ -145,6 +162,7 @@ class FakeStorage:
         # del lote -- ver `signed_download_urls`.
         self.fallar_firma_de: set[str] = set()
         self.batch_calls: list[list[str]] = []
+        self.uploads: list[tuple[str, bytes, str]] = []
 
     async def create_signed_upload(self, path: str) -> SignedUpload:
         if path in self.already_uploaded:
@@ -173,3 +191,6 @@ class FakeStorage:
             )
             for path in paths
         }
+
+    async def upload(self, path: str, data: bytes, content_type: str) -> None:
+        self.uploads.append((path, data, content_type))
