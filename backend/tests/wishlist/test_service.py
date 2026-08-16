@@ -2,8 +2,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from openpyxl import Workbook
 
+from pokedex.catalog.models import Card
+from pokedex.catalog.service import CatalogService
 from pokedex.wishlist import repository
+from pokedex.wishlist.excel import SHEET_DEX, SHEET_GALLERY
 from pokedex.wishlist.service import ImportService
 
 XLSX = Path(__file__).parents[3] / "Pokedex_Viviente_151.xlsx"
@@ -24,6 +28,54 @@ class FakeCatalogService:
 
     async def list_set_cards(self, set_id: str):
         return []
+
+
+class FakeCatalogPortConNumeros:
+    """Puerto falso que sí resuelve números fijos del set 151, para probar
+    que la galería encuentra y marca la misma carta que ya resolvió una
+    opción, en vez de crear una fila nueva."""
+
+    def __init__(self, cartas: dict[str, str]):
+        self._cartas = cartas  # local_id -> card_id
+
+    async def get_card(self, card_id: str):
+        return None
+
+    async def find_by_set_and_number(self, set_id: str, local_id: str):
+        card_id = self._cartas.get(local_id) if set_id == "sv03.5" else None
+        if card_id is None:
+            return None
+        return Card(
+            id=card_id, name="Ditto", set_id=set_id, set_name="151", local_id=local_id, raw={}
+        )
+
+    async def list_set_cards(self, set_id: str):
+        return []
+
+
+def _build_mini_workbook(tmp_path: Path) -> Path:
+    """Un Pokémon con opción 1 (001/165) y opción 2 (166/165, no-reverse:
+    una Illustration Rare propia), más una fila de galería que la nombra por
+    el mismo número — el caso real es "Bulbasaur 151 166/165"."""
+    workbook = Workbook()
+    dex_sheet = workbook.active
+    dex_sheet.title = SHEET_DEX
+    dex_sheet["A4"] = 1
+    dex_sheet["B4"] = "Ditto"
+    dex_sheet["E4"] = "Ditto 001/165"
+    dex_sheet["G4"] = "0.10"
+    dex_sheet["I4"] = "Ditto 166/165"
+    dex_sheet["K4"] = "12.00"
+
+    gallery_sheet = workbook.create_sheet(SHEET_GALLERY)
+    gallery_sheet["A4"] = 1
+    gallery_sheet["B4"] = "Ditto"
+    gallery_sheet["C4"] = "Ditto 151 166/165"
+    gallery_sheet["D4"] = "12.00"
+
+    path = tmp_path / "mini.xlsx"
+    workbook.save(path)
+    return path
 
 
 @pytest.fixture()
@@ -71,10 +123,32 @@ async def test_reimportar_es_idempotente(conn_factory, clean_db):
     assert primero.items_creados > 0
 
 
-async def test_la_galeria_marca_favoritos_en_vez_de_duplicar(conn_factory, clean_db):
+async def test_la_galeria_marca_favoritos_en_vez_de_duplicar(conn_factory, clean_db, tmp_path):
+    """Cuando la galería resuelve a la misma carta que ya insertó una opción,
+    no debe crear una fila nueva: debe marcar `is_favorite` en la existente."""
+    path = _build_mini_workbook(tmp_path)
+    port = FakeCatalogPortConNumeros({"001": "sv03.5-001", "166": "sv03.5-166"})
+    catalog = CatalogService(port, conn_factory)
+    service = ImportService(catalog, conn_factory)
+
+    await service.import_workbook(path)
+
+    filas = repository.list_wishlist(clean_db, dex_number=1)
+    assert len(filas) == 2, "la galería no debe agregar una fila además de opción 1 y 2"
+    opcion_2 = next(f for f in filas if f["card_id"] == "sv03.5-166")
+    assert opcion_2["is_favorite"] is True
+
+
+async def test_la_galeria_marca_favorita_una_fila_sin_resolver_cuando_el_texto_no_resuelve(
+    conn_factory, clean_db
+):
+    """Trece filas de la galería dicen literalmente 'Ya está en tu Opción 2':
+    no traen número, así que no hay con qué fusionar. Deben seguir quedando
+    como una fila propia, marcada como favorita."""
     service = ImportService(FakeCatalogService(clean_db), conn_factory)
     await service.import_workbook(XLSX)
-    favoritos = clean_db.execute(
-        "select count(*) as n from app.wishlist_item where is_favorite"
+    favoritos_sin_resolver = clean_db.execute(
+        "select count(*) as n from app.wishlist_item"
+        " where is_favorite and card_id is null and source_option = 'galeria'"
     ).fetchone()["n"]
-    assert favoritos >= 41, "las 41 filas de la galería deben dejar marca"
+    assert favoritos_sin_resolver > 0

@@ -15,7 +15,7 @@ from pokedex.catalog.models import CardRef
 from pokedex.catalog.ports import CatalogPort
 from pokedex.catalog.variants import VariantLabel
 
-from .models import ExcelOption, ExcelRow
+from .models import ExcelOption, ExcelRow, GalleryRow
 
 SET_151 = "sv03.5"
 
@@ -115,6 +115,19 @@ class OptionResolver:
             # como último recurso, intentamos resolver el reverse por su
             # propio número.
             return await self._resolve_numbered(option, VariantLabel.REVERSE)
+        return await self._resolve_numbered(option, VariantLabel.HOLO)
+
+    async def resolve_gallery_row(self, gallery_row: GalleryRow) -> ResolvedOption:
+        """La galería solo trae texto y, a veces, un número de colección del
+        set 151 (ej. "Bulbasaur 151 166/165"). Esas cartas son Illustration
+        o Special Illustration Rare, con una única variante `holo` en
+        TCGdex — el mismo caso que la opción 2 no-reverse, así que se reusa
+        `_resolve_numbered` en vez de escribir un segundo parser."""
+        option = ExcelOption(
+            source_option="galeria",
+            raw_text=gallery_row.raw_text,
+            reference_value_usd=gallery_row.reference_value_usd,
+        )
         return await self._resolve_numbered(option, VariantLabel.HOLO)
 
     async def _resolve_vintage(self, option: ExcelOption, pokemon_name: str) -> ResolvedOption:

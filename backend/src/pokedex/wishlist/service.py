@@ -60,7 +60,7 @@ class ImportService:
                     )
 
             for gallery_row in gallery:
-                self._marcar_favorito(conn, gallery_row)
+                await self._marcar_favorito(conn, resolver, gallery_row)
 
             conn.commit()
             despues = self._contar_items(conn)
@@ -69,16 +69,27 @@ class ImportService:
         summary.items_actualizados = antes
         return summary
 
-    def _marcar_favorito(self, conn: Connection, gallery_row: GalleryRow) -> None:
+    async def _marcar_favorito(
+        self, conn: Connection, resolver: OptionResolver, gallery_row: GalleryRow
+    ) -> None:
         """La galería no crea items nuevos si la carta ya está como opción:
-        le pone la marca de favorito. Trece de sus filas dicen literalmente
-        'Ya está en tu Opción 2'."""
+        le pone la marca de favorito encima del item ya existente.
+
+        Para eso hay que resolver el texto de la galería contra el catálogo
+        igual que una opción cualquiera: si resuelve a la misma
+        `(dex_number, card_id, variant_label)` que ya insertó la opción
+        correspondiente, el upsert de `_UPSERT_RESUELTO` cae en el mismo
+        conflicto y solo pone `is_favorite`, sin fila nueva. Solo el texto
+        que de verdad no resuelve (ej. "Ya está en tu Opción 2", trece de sus
+        filas) termina como una fila sin resolver marcada como favorita.
+        """
+        resolved = await resolver.resolve_gallery_row(gallery_row)
         repository.upsert_wishlist_item(
             conn,
             WishlistItemIn(
                 dex_number=gallery_row.dex_number,
-                card_id=None,
-                variant_label=None,
+                card_id=resolved.card_id,
+                variant_label=resolved.variant_label,
                 raw_text=gallery_row.raw_text,
                 source_option="galeria",
                 is_favorite=True,
