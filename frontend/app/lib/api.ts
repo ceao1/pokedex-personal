@@ -1,11 +1,30 @@
-import type { Card, OwnedCopy, OwnedCopyIn, Pokemon, PokemonDetail, StartCapture } from "./types";
+import type {
+  Card,
+  Identificacion,
+  OwnedCopy,
+  OwnedCopyIn,
+  Pokemon,
+  PokemonDetail,
+  StartCapture,
+} from "./types";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
+
+/** Lleva el status HTTP a cuestas para que quien llama pueda distinguir
+ * "no existe" (404, la pantalla lo dice) de "el backend no responde"
+ * (cualquier otro fallo, mensaje distinto). */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, path: string) {
+    super(`El backend respondió ${status} en ${path}`);
+    this.status = status;
+  }
+}
 
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`El backend respondió ${response.status} en ${path}`);
+    throw new ApiError(response.status, path);
   }
   return response.json() as Promise<T>;
 }
@@ -102,6 +121,23 @@ export function marcarFotoSubida(clientDraftId: string): Promise<OwnedCopy> {
   return apiPost<OwnedCopy>(`/api/captures/${clientDraftId}/photo-uploaded`, {});
 }
 
+/** Dispara la identificación por foto en segundo plano. Nunca lanza: sin
+ * llave configurada el backend responde 503, y un problema de red es
+ * exactamente igual de silencioso -- en ambos casos el registro a mano
+ * sigue funcionando como si esto no existiera. `null` significa "no hay
+ * propuesta", nunca "algo se rompió". */
+export async function identificarCaptura(clientDraftId: string): Promise<Identificacion | null> {
+  try {
+    const response = await fetch(`/api/captures/${clientDraftId}/identificar`, {
+      method: "POST",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as Identificacion;
+  } catch {
+    return null;
+  }
+}
+
 export function actualizarCaptura(
   clientDraftId: string,
   datos: OwnedCopyIn
@@ -113,4 +149,11 @@ export function buscarCarta(setId: string, localId: string): Promise<Card> {
   return apiGetLocal<Card>(
     `/api/catalog/sets/${encodeURIComponent(setId)}/${encodeURIComponent(localId)}`
   );
+}
+
+/** El arte de una impresión concreta. `GET /pokedex/{dex}` no manda el arte
+ * de catálogo de cada ejemplar propio (solo la foto del dueño, si hay), así
+ * que la ficha lo completa con esta llamada cuando falta la foto. */
+export function fetchCard(cardId: string): Promise<Card> {
+  return get<Card>(`/catalog/cards/${encodeURIComponent(cardId)}`);
 }

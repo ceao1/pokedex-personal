@@ -4,6 +4,26 @@
   color: inherit;
   text-decoration: none;
   aspect-ratio: 5 / 7;
+  animation: deal 260ms ease-out both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.blank {
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--binder-deep) 70%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--sleeve-edge) 45%, transparent);
+  box-shadow: none;
+  animation: none;
+}
+
+/* La cara visible del bolsillo: antes vivía en .pocket, pero con varios
+   ejemplares hacen falta cantos apilados detrás, así que la cara pasa a
+   ser un hijo posicionado en vez de la caja entera -- .pocket ya no
+   recorta, para que los cantos puedan asomar más allá de su propio borde. */
+.face {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   border-radius: var(--radius);
   background: linear-gradient(170deg, var(--pocket), var(--binder-deep));
   border: 1px solid color-mix(in srgb, var(--sleeve-edge) 45%, transparent);
@@ -11,15 +31,27 @@
     inset 0 1px 0 color-mix(in srgb, var(--sleeve-edge) 60%, transparent),
     0 2px 8px rgb(0 0 0 / 0.35);
   overflow: hidden;
-  animation: deal 260ms ease-out both;
-  animation-delay: var(--delay, 0ms);
 }
 
-.blank {
-  background: color-mix(in srgb, var(--binder-deep) 70%, transparent);
-  border-style: dashed;
-  box-shadow: none;
-  animation: none;
+/* Los cantos de los demás ejemplares, apenas desplazados en diagonal.
+   Máximo dos, sin importar cuántos haya de verdad. */
+.stackEdge1,
+.stackEdge2 {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  background: var(--pocket);
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 45%, transparent);
+}
+
+.stackEdge1 {
+  z-index: 1;
+  translate: 4px 4px;
+}
+
+.stackEdge2 {
+  z-index: 0;
+  translate: 8px 8px;
 }
 
 .card {
@@ -34,12 +66,17 @@
   filter: grayscale(0.75) brightness(0.62) contrast(0.95);
 }
 
-.owned {
+.owned .face {
   border-color: color-mix(in srgb, var(--lens) 55%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--lens) 40%, transparent),
     0 0 0 1px color-mix(in srgb, var(--lens) 25%, transparent),
     0 4px 14px rgb(0 0 0 / 0.45);
+}
+
+.owned .stackEdge1,
+.owned .stackEdge2 {
+  border-color: color-mix(in srgb, var(--lens) 35%, transparent);
 }
 
 .noCard {
@@ -85,6 +122,15 @@
   white-space: nowrap;
   font-size: var(--step-0);
   font-weight: 600;
+}
+
+/* El ×N de ejemplares: dato, no adorno, así que va en la tipografía de
+   datos junto al número de dex. Solo se dibuja con más de uno. */
+.count {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  font-weight: 700;
+  color: var(--lens);
 }
 
 .price {

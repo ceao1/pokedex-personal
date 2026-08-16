@@ -7,6 +7,7 @@ export type Pokemon = {
   primary_image_url: string | null;
   primary_card_name: string | null;
   primary_price_usd: number | null;
+  primary_price_captured_at: string | null;
 };
 
 export type WishlistItem = {
@@ -25,9 +26,30 @@ export type WishlistItem = {
   rarity: string | null;
   set_name: string | null;
   price_usd: number | null;
+  price_captured_at: string | null;
 };
 
-export type PokemonDetail = Pokemon & { options: WishlistItem[] };
+/** Un ejemplar propio, tal como lo devuelve `GET /pokedex/{dex}` en
+ * `copies`. La foto ya viene firmada (o `null` si no hay o si firmar
+ * falló) — nunca es la ruta cruda del bucket privado. */
+export type OwnedCopyDetail = {
+  id: number;
+  card_id: string | null;
+  card_name: string | null;
+  set_name: string | null;
+  local_id: string | null;
+  variant_label: string | null;
+  condition: string | null;
+  purchase_price_usd: number | null;
+  photo_url: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+export type PokemonDetail = Pokemon & {
+  options: WishlistItem[];
+  copies: OwnedCopyDetail[];
+};
 
 export type Variant = {
   id: string;
@@ -83,6 +105,32 @@ export type OwnedCopyIn = {
   capture_status?: string | null;
   lifecycle_status?: string | null;
   notes?: string | null;
+};
+
+/** Lo que el modelo leyó de la foto, sin validar todavía contra el
+ * catálogo (`RecognitionOut` en el backend). Confirmado contra el
+ * contrato real: trae `species`/`dex_number` además de las seis claves
+ * documentadas en el plan -- justo lo que permite responder "cuál
+ * Pokémon es" aunque el set o el número no resuelvan. */
+export type Recognition = {
+  name: string | null;
+  set_name: string | null;
+  number: string | null;
+  rarity: string | null;
+  species: string | null;
+  dex_number: number | null;
+  confidence: number;
+  needs_review: boolean;
+};
+
+/** Respuesta de `POST /captures/{client_draft_id}/identificar`. `carta` solo
+ * viene si `(set, número)` resolvió contra el catálogo real -- una
+ * identificación nunca se acepta por su sola palabra. */
+export type Identificacion = {
+  reconocido: Recognition;
+  carta: Card | null;
+  necesita_revision: boolean;
+  motivo: string;
 };
 
 export type OwnedCopy = {

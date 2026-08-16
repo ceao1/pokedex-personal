@@ -5,6 +5,7 @@ import {
   actualizarCaptura,
   buscarCarta,
   crearCaptura,
+  identificarCaptura,
   marcarFotoSubida,
   nuevoClientDraftId,
   subirFoto,
@@ -15,7 +16,7 @@ import {
   listarFotosPendientes,
   type FotoPendiente,
 } from "../lib/fotosPendientes";
-import type { Card, StartCapture, Variant, VariantLabel } from "../lib/types";
+import type { Card, Identificacion, StartCapture, Variant, VariantLabel } from "../lib/types";
 import styles from "./Captura.module.css";
 
 // Los sets vintage (1999-2003) son los únicos con chips "1st Edition",
@@ -134,6 +135,14 @@ export function Captura() {
   const [varianteLabel, setVarianteLabel] = useState<VariantLabel | null>(null);
   const [varianteResuelta, setVarianteResuelta] = useState<Variant | null>(null);
 
+  // La identificación por foto propone; nunca escribe los campos por su
+  // cuenta (ver `aceptarIdentificacion`). `null` cubre tres casos que no
+  // hace falta distinguir en la pantalla: todavía no llegó, la llave no
+  // está configurada, o la llamada falló -- en los tres el registro a
+  // mano sigue exactamente igual.
+  const [identificacion, setIdentificacion] = useState<Identificacion | null>(null);
+  const [identificando, setIdentificando] = useState(false);
+
   const [precio, setPrecio] = useState("");
 
   const [guardando, setGuardando] = useState(false);
@@ -224,6 +233,27 @@ export function Captura() {
     return inicio;
   }
 
+  /** Se dispara sola en cuanto la foto queda confirmada, en segundo plano.
+   * Nunca bloquea el registro a mano: si el dueño ya terminó de escribir el
+   * número mientras esto corría, lo suyo gana (ver `aceptarIdentificacion`,
+   * que solo actúa si el dueño toca el botón). */
+  async function dispararIdentificacion(clientDraftId: string) {
+    setIdentificando(true);
+    try {
+      const resultado = await identificarCaptura(clientDraftId);
+      // La respuesta puede llegar después de que el dueño ya haya empezado
+      // a registrar otra carta: si el borrador actual ya no es este, la
+      // propuesta es de una foto que ya no está en pantalla.
+      if (clientDraftIdRef.current === clientDraftId) {
+        setIdentificacion(resultado);
+      }
+    } finally {
+      if (clientDraftIdRef.current === clientDraftId) {
+        setIdentificando(false);
+      }
+    }
+  }
+
   /** Sube las dos renditions ya redimensionadas y marca la foto en el
    * backend. Una URL firmada vacía significa "ya subido, no hace falta
    * volver a mandar la foto" (ver `_firmar_subida_o_ya_existente` en el
@@ -246,6 +276,7 @@ export function Captura() {
       fotoMarcadaRef.current = true;
       await eliminarFotoPendiente(clientDraftId);
       setEstadoFoto("lista");
+      void dispararIdentificacion(clientDraftId);
     } catch {
       // Nunca se pierde la foto por un fallo de red: los blobs ya están en
       // IndexedDB desde antes de este intento, y el ejemplar puede
@@ -262,6 +293,8 @@ export function Captura() {
     fotoMarcadaRef.current = false;
     bytesSubidosRef.current = false;
     setEstadoFoto("subiendo");
+    setIdentificacion(null);
+    setIdentificando(false);
     try {
       const [front, thumb] = await Promise.all([
         redimensionar(archivo, 2048),
@@ -334,6 +367,38 @@ export function Captura() {
     setVarianteResuelta(carta ? elegirVariante(carta.variants, label) : null);
   }
 
+  /** Único punto donde la propuesta de la foto llega a los campos: un clic
+   * del dueño. Nunca ocurre sola, aunque haya llegado antes de que él
+   * escribiera nada -- aceptar es un acto suyo, no un efecto de la subida. */
+  function aceptarIdentificacion() {
+    const propuesta = identificacion?.carta;
+    if (!propuesta) return;
+    setSetId(propuesta.set_id);
+    setNumero(
+      propuesta.set_card_count ? `${propuesta.local_id}/${propuesta.set_card_count}` : propuesta.local_id
+    );
+    setCarta(propuesta);
+    setVarianteLabel(null);
+    setVarianteResuelta(null);
+  }
+
+  /** Cuando el modelo leyó el número pero no pudo resolver la carta contra
+   * el catálogo (set no identificado, número inexistente, confianza baja):
+   * el número leído igual sirve de punto de partida para que el dueño
+   * complete el set a mano, en vez de tirar todo lo que sí se leyó.
+   *
+   * A propósito también borra el set: si quedara el que recuerda
+   * `localStorage` de una carta anterior, la búsqueda automática por
+   * set+número podría "resolver" contra una carta real pero equivocada,
+   * sin que el dueño la haya confirmado -- exactamente la inercia que la
+   * identificación no puede permitirse. */
+  function usarNumeroLeido() {
+    const numeroLeido = identificacion?.reconocido?.number;
+    if (!numeroLeido) return;
+    setSetId("");
+    setNumero(numeroLeido);
+  }
+
   async function guardar() {
     setGuardando(true);
     setErrorGuardado(null);
@@ -379,6 +444,8 @@ export function Captura() {
     bytesSubidosRef.current = false;
     setPreviewUrl(null);
     setEstadoFoto("sin_foto");
+    setIdentificacion(null);
+    setIdentificando(false);
     setNumero("");
     setCarta(null);
     setErrorCarta(null);
@@ -470,6 +537,75 @@ export function Captura() {
           </>
         )}
       </p>
+
+      {identificando && (
+        <p className={styles.identificando} aria-live="polite">
+          Analizando la foto…
+        </p>
+      )}
+
+      {identificacion?.carta && (
+        <div className={styles.propuesta}>
+          {identificacion.carta.image_url && (
+            <img
+              className={styles.propuestaImagen}
+              src={identificacion.carta.image_url}
+              alt=""
+              loading="lazy"
+            />
+          )}
+          <div className={styles.propuestaDatos}>
+            <p className={styles.propuestaEtiqueta}>
+              Reconocida por la foto — confirma que es esta
+            </p>
+            <p className={styles.propuestaNombre}>{identificacion.carta.name}</p>
+            <p className={styles.propuestaDetalle}>
+              {identificacion.carta.set_name} · {identificacion.carta.local_id}
+              {identificacion.carta.set_card_count ? `/${identificacion.carta.set_card_count}` : ""}
+            </p>
+            <button type="button" className={styles.propuestaBoton} onClick={aceptarIdentificacion}>
+              Usar esta carta
+            </button>
+          </div>
+        </div>
+      )}
+
+      {identificacion && !identificacion.carta && (
+        <div className={styles.propuestaFallida}>
+          <p>{identificacion.motivo || "No pude leer el número. Escríbelo tú."}</p>
+          {/* Aunque no se resolvió contra el catálogo, lo que sí se leyó
+              sirve: "no supo cuál Pokémon era" es justo la queja que esto
+              responde, aun sin número o set confirmados. */}
+          {(identificacion.reconocido?.species ||
+            identificacion.reconocido?.name ||
+            identificacion.reconocido?.number) && (
+            <p className={styles.hint}>
+              Se leyó
+              {identificacion.reconocido?.species ? ` ${identificacion.reconocido.species}` : ""}
+              {identificacion.reconocido?.dex_number != null
+                ? ` (número ${String(identificacion.reconocido.dex_number).padStart(3, "0")} del Pokédex)`
+                : ""}
+              {identificacion.reconocido?.name &&
+              identificacion.reconocido.name !== identificacion.reconocido?.species
+                ? ` — ${identificacion.reconocido.name}`
+                : ""}
+              {identificacion.reconocido?.number
+                ? `, número de colección ${identificacion.reconocido.number}`
+                : ""}
+              .
+            </p>
+          )}
+          {identificacion.reconocido?.number && (
+            <button
+              type="button"
+              className={styles.propuestaBotonSecundario}
+              onClick={usarNumeroLeido}
+            >
+              Usar este número
+            </button>
+          )}
+        </div>
+      )}
 
       <div className={styles.fila}>
         <label className={styles.campo}>

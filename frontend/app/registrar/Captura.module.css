@@ -32,6 +32,12 @@
   letter-spacing: -0.02em;
 }
 
+.hintCabecera {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
 .tarjeta {
   display: flex;
   flex-direction: column;
@@ -122,6 +128,98 @@
   font-weight: 600;
   color: var(--lens);
   text-decoration: underline;
+}
+
+.identificando {
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+/* La propuesta de la identificación por foto: nunca se impone, así que se
+   ve deliberadamente como una tarjeta aparte a confirmar, con el mismo
+   color de estado (--lens) que usa "conseguido" en el resto de la app. */
+.propuesta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--lens) 50%, transparent);
+  background: color-mix(in srgb, var(--lens) 10%, transparent);
+}
+
+.propuestaImagen {
+  inline-size: 56px;
+  block-size: 78px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: none;
+}
+
+.propuestaDatos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-inline-size: 0;
+}
+
+.propuestaEtiqueta {
+  font-size: var(--step--1);
+  color: var(--lens);
+  font-weight: 600;
+}
+
+.propuestaNombre {
+  font-weight: 700;
+}
+
+.propuestaDetalle {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.propuestaBoton {
+  align-self: flex-start;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--lens) 55%, transparent);
+  font-weight: 600;
+  font-size: var(--step--1);
+  color: var(--stock);
+  transition: background-color 140ms ease;
+}
+
+.propuestaBoton:hover {
+  background: color-mix(in srgb, var(--lens) 25%, transparent);
+}
+
+/* Una identificación fallida es un resultado normal, no un error: mismo
+   tono neutro que .hint, sin el rojo de .error. */
+.propuestaFallida {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px dashed color-mix(in srgb, var(--sleeve-edge) 55%, transparent);
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.propuestaBotonSecundario {
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 55%, transparent);
+  font-weight: 600;
+  font-size: var(--step--1);
+  color: var(--stock);
+  transition: background-color 140ms ease;
+}
+
+.propuestaBotonSecundario:hover {
+  background: color-mix(in srgb, var(--sleeve-edge) 25%, transparent);
 }
 
 .fila {
