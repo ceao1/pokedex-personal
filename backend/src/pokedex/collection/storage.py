@@ -17,6 +17,24 @@ class SignedUpload(BaseModel):
     token: str
 
 
+class AlreadyUploaded(Exception):
+    """El objeto ya tiene bytes en el bucket -- no es un error del flujo.
+
+    Verificado a mano contra Supabase Storage real: pedir una firma de
+    subida para un path que ya tiene un objeto devuelve HTTP 400 con
+    `{"statusCode":"409","error":"Duplicate"}`, y ni `x-upsert` en el PUT ni
+    `{"upsert": true}` en la firma lo evitan -- el upsert queda fijo en el
+    momento de firmar. Es justo lo que pasa si el celular ya subió la foto y
+    reintenta `POST /captures` porque perdió la respuesta del primer intento.
+
+    Se modela como una excepción propia (y no, por ejemplo, un `SignedUpload`
+    con `token=""`) para que el servicio pueda distinguir "ya subido, no hay
+    nada que firmar" de un error real sin inspeccionar el contenido de una
+    URL -- y para que un error genuino (auth rechazada, bucket inexistente,
+    red caída) siga propagándose tal cual, vía `raise_for_status()`.
+    """
+
+
 class StoragePort(Protocol):
     async def create_signed_upload(self, path: str) -> SignedUpload: ...
 
@@ -38,6 +56,10 @@ class SupabaseStorage:
             headers=self._headers,
             json={},
         )
+        if response.status_code == 400:
+            cuerpo = response.json()
+            if cuerpo.get("statusCode") == "409" and cuerpo.get("error") == "Duplicate":
+                raise AlreadyUploaded(path)
         response.raise_for_status()
         cuerpo = response.json()
         # La API devuelve la url con el token embebido en query string.
@@ -61,18 +83,22 @@ class FakeStorage:
     Registra las rutas pedidas para que un test pueda comprobar que el
     servicio armó el path esperado, sin depender de Supabase Storage real.
 
-    Diverge a propósito de un detalle verificado a mano contra el Storage
-    real: re-firmar la subida de un path que ya tiene objeto devuelve 409 ahí
-    (ver `CaptureService.iniciar_captura`); acá siempre devuelve éxito. Un
-    test de idempotencia contra este fake no puede probar esa arista -- solo
-    prueba que el borrador no se duplica en la base.
+    `already_uploaded` deja que un test simule el 409 real: a diferencia de
+    Supabase Storage, este fake no sabe si alguien hizo un PUT de verdad
+    contra el path (esa subida ocurre directo celular-a-bucket, sin pasar
+    por el backend), así que un test la marca a mano agregando el path acá
+    antes de reintentar -- ver
+    `test_post_captures_reintento_con_foto_ya_subida_no_revienta`.
     """
 
     def __init__(self) -> None:
         self.signed_uploads: list[str] = []
         self.signed_downloads: list[str] = []
+        self.already_uploaded: set[str] = set()
 
     async def create_signed_upload(self, path: str) -> SignedUpload:
+        if path in self.already_uploaded:
+            raise AlreadyUploaded(path)
         self.signed_uploads.append(path)
         return SignedUpload(
             path=path,

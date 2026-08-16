@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from . import repository
 from .models import OwnedCopy, OwnedCopyIn
-from .storage import StoragePort
+from .storage import AlreadyUploaded, StoragePort
 
 ConnFactory = Callable[[], AbstractContextManager[Connection]]
 
@@ -67,32 +67,41 @@ class CaptureService:
             )
         return copy.model_copy(update=cambios) if cambios else copy
 
+    async def _firmar_subida_o_ya_existente(self, path: str) -> str:
+        """Pide la firma de subida; si Storage dice que el objeto ya existe
+        (`AlreadyUploaded`), no es un error -- el celular ya lo subió en un
+        intento anterior y esto es un reintento de `POST /captures` que
+        perdió la respuesta. Se devuelve cadena vacía como señal de "ya
+        subido, no hace falta volver a mandar la foto": el shape de la
+        respuesta no cambia (`uploads.front`/`uploads.thumb` siguen siendo
+        `str`), y un error genuino (auth, bucket inexistente, red caída)
+        sigue propagándose sin capturar, porque `AlreadyUploaded` es el único
+        caso que este `except` reconoce."""
+        try:
+            subida = await self._storage.create_signed_upload(path)
+        except AlreadyUploaded:
+            return ""
+        return subida.signed_url
+
     async def iniciar_captura(self, client_draft_id: UUID) -> CaptureStart:
         """Pide las dos URLs firmadas de subida y crea el borrador.
 
         Las rutas se derivan del `client_draft_id` en vez de generarse al
-        azar: así, si el celular reintenta esta llamada *antes* de que la
-        subida haya llegado a destino, pide de nuevo la firma para el mismo
-        par de rutas en vez de dejar huérfano el primer intento.
-
-        Ese razonamiento se rompe si el reintento llega *después* de que los
-        bytes ya aterrizaron: verificado a mano contra Supabase Storage real,
-        volver a pedir la firma para un path que ya tiene objeto devuelve
-        {"statusCode":"409","error":"Duplicate"} con status HTTP 400, y
-        `raise_for_status()` lo deja pasar como `httpx.HTTPStatusError` sin
-        capturar -- el celular vería un 500. No se atrapa acá a propósito
-        (atraparlo filtraría `httpx` a través del puerto); queda como riesgo
-        conocido, documentado en el reporte del batch.
+        azar: así, si el celular reintenta esta llamada, pide de nuevo la
+        firma para el mismo par de rutas en vez de dejar huérfano el primer
+        intento -- y si el reintento llega después de que los bytes ya
+        aterrizaron, `_firmar_subida_o_ya_existente` absorbe el 409 real de
+        Storage en vez de dejarlo escapar como un 500.
         """
-        front = await self._storage.create_signed_upload(self._front_path(client_draft_id))
-        thumb = await self._storage.create_signed_upload(self._thumb_path(client_draft_id))
+        front_url = await self._firmar_subida_o_ya_existente(self._front_path(client_draft_id))
+        thumb_url = await self._firmar_subida_o_ya_existente(self._thumb_path(client_draft_id))
 
         with self._conn_factory() as conn:
             repository.crear_borrador(conn, client_draft_id)
 
         return CaptureStart(
             client_draft_id=client_draft_id,
-            uploads=CaptureUploads(front=front.signed_url, thumb=thumb.signed_url),
+            uploads=CaptureUploads(front=front_url, thumb=thumb_url),
         )
 
     async def marcar_fotos_subidas(self, client_draft_id: UUID) -> OwnedCopy | None:

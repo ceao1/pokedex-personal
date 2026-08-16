@@ -46,12 +46,26 @@ def test_post_captures_devuelve_las_dos_urls_firmadas(client, fake_storage):
 
 
 def test_post_captures_es_idempotente(client, clean_db):
-    """Cubre la idempotencia de la fila en la base. No cubre el detalle
-    verificado a mano contra Supabase Storage real: re-firmar la subida de
-    un path que ya tiene objeto devuelve 409 ahí, y `FakeStorage` no lo
-    reproduce (ver su docstring) -- este test no prueba esa arista."""
     client.post("/captures", json={"client_draft_id": DRAFT})
     client.post("/captures", json={"client_draft_id": DRAFT})
+    total = clean_db.execute("select count(*) as n from app.owned_copy").fetchone()["n"]
+    assert total == 1
+
+
+def test_post_captures_reintento_con_foto_ya_subida_no_revienta(client, clean_db, fake_storage):
+    """Reproduce el caso que motiva `client_draft_id`: el celular subió la
+    foto directo al bucket, la respuesta de este POST se perdió en el
+    camino, y el celular reintenta. Verificado a mano contra Supabase
+    Storage real: re-firmar la subida de un path que ya tiene objeto
+    devuelve 409 -- si eso se propagara tal cual, el reintento vería un 500
+    en vez de la idempotencia que `client_draft_id` promete."""
+    client.post("/captures", json={"client_draft_id": DRAFT})
+    fake_storage.already_uploaded.add(f"{DRAFT}/front.jpg")
+    fake_storage.already_uploaded.add(f"{DRAFT}/thumb.jpg")
+
+    response = client.post("/captures", json={"client_draft_id": DRAFT})
+    assert response.status_code == 200
+
     total = clean_db.execute("select count(*) as n from app.owned_copy").fetchone()["n"]
     assert total == 1
 
