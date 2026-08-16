@@ -23,7 +23,10 @@ values
 on conflict (dex_number, card_id, variant_label) where card_id is not null
 do update set
     raw_text            = excluded.raw_text,
-    source_option       = excluded.source_option,
+    -- No se pisa: "gana el primero que resolvió esta clave". Si se
+    -- actualizara, una fila de la galería que fusiona sobre la clave de
+    -- otra opción le robaría el source_option (y con él, el orden que usa
+    -- `primary_image_url` en `_LIST_POKEDEX` para elegir la ruta barata).
     is_favorite         = app.wishlist_item.is_favorite or excluded.is_favorite,
     reference_value_usd = excluded.reference_value_usd,
     updated_at          = now()
@@ -38,7 +41,8 @@ values
      %(auto_resolved)s, %(is_favorite)s, %(reference_value_usd)s)
 on conflict (dex_number, raw_text) where card_id is null
 do update set
-    source_option       = excluded.source_option,
+    -- Mismo criterio que en _UPSERT_RESUELTO: no se pisa el source_option
+    -- del primero que insertó esta clave.
     is_favorite         = app.wishlist_item.is_favorite or excluded.is_favorite,
     reference_value_usd = excluded.reference_value_usd,
     updated_at          = now()

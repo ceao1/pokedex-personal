@@ -175,6 +175,40 @@ def test_la_ruta_preferida_es_la_opcion_1_y_no_otra(clean_db):
     )
 
 
+def test_una_fusion_de_galeria_no_le_roba_la_ruta_preferida_a_opcion_1(clean_db):
+    """Cuando la galería fusiona sobre la clave de la opción 2 (mismo
+    card_id + variant_label), el upsert no debe cambiarle el source_option a
+    esa fila a 'galeria': 'galeria' ordena alfabéticamente antes que
+    'opcion_1', así que si lo hiciera, `primary_image_url` mostraría la
+    Illustration Rare cara en vez de la carta barata del set 151."""
+    _sembrar_carta(clean_db)
+    clean_db.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, image_url, raw)
+        values ('sv03.5-166', 'Bulbasaur IR', 'sv03.5', '151', '166',
+                'https://x/166/high.png', '{}'::jsonb)
+        """
+    )
+    repository.upsert_wishlist_item(
+        clean_db, _item(source_option="opcion_2", card_id="sv03.5-166", variant_label="holo")
+    )
+    repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_1"))
+    # La galería fusiona sobre la misma clave (dex, card, variante) que opción 2.
+    repository.upsert_wishlist_item(
+        clean_db,
+        _item(
+            source_option="galeria",
+            card_id="sv03.5-166",
+            variant_label="holo",
+            is_favorite=True,
+            raw_text="Bulbasaur 151 166/165",
+        ),
+    )
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["primary_image_url"] == "https://x/001/high.png"
+    assert fila["primary_card_name"] == "Bulbasaur"
+
+
 def _sembrar_dos_variantes_del_mismo_tipo(conn, card_id="sv03.5-001"):
     """(card_id, type) no es único: Bulbasaur tiene una variante `normal`
     simple y otra con sello de set, ambas de type='normal'."""
