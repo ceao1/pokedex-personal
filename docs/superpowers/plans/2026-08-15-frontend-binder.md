@@ -1020,6 +1020,271 @@ git commit -m "feat: PWA instalable, teclado y responsive"
 
 ---
 
+## Task 5: cartas reales en los bolsillos
+
+Corrige dos cosas de las tasks anteriores. La primera es un defecto de honestidad: el riel calculaba el progreso como `wishlist_count > 0`, y después del import del Excel eso da 151 de 151 — la app diría que la colección está completa sin una sola carta registrada. La segunda es una mejora que el backend ahora habilita: el bolsillo puede mostrar el arte real de la carta TCG que se persigue en vez de un sprite genérico.
+
+**Files:**
+- Modify: `frontend/app/lib/types.ts`
+- Modify: `frontend/app/binder/Pocket.tsx`
+- Modify: `frontend/app/binder/Pocket.module.css`
+- Modify: `frontend/app/binder/Rail.tsx`
+- Modify: `frontend/app/binder/Rail.module.css`
+- Modify: `frontend/app/binder/Binder.tsx`
+
+**Interfaces:**
+- Consumes: los campos nuevos de `GET /pokedex` — `owned_count`, `primary_image_url`, `primary_card_name`, `primary_price_usd`
+
+- [ ] **Step 1: Ampliar el tipo**
+
+En `frontend/app/lib/types.ts`, el tipo `Pokemon` pasa a:
+
+```ts
+export type Pokemon = {
+  dex_number: number;
+  name: string;
+  wishlist_count: number;
+  sin_resolver: number;
+  owned_count: number;
+  primary_image_url: string | null;
+  primary_card_name: string | null;
+  primary_price_usd: number | null;
+};
+```
+
+- [ ] **Step 2: Reescribir el bolsillo**
+
+`frontend/app/binder/Pocket.tsx`:
+
+```tsx
+import type { Pokemon } from "../lib/types";
+import styles from "./Pocket.module.css";
+
+type Props = {
+  pokemon: Pokemon | null;
+  index: number;
+};
+
+export function Pocket({ pokemon, index }: Props) {
+  if (pokemon === null) {
+    return <div className={`${styles.pocket} ${styles.blank}`} aria-hidden="true" />;
+  }
+
+  const conseguido = pokemon.owned_count > 0;
+  const dex = String(pokemon.dex_number).padStart(3, "0");
+
+  return (
+    <article
+      className={`${styles.pocket} ${conseguido ? styles.owned : styles.hunting}`}
+      style={{ "--delay": `${index * 20}ms` } as React.CSSProperties}
+      aria-label={
+        conseguido
+          ? `${pokemon.name}, número ${dex}, en el binder`
+          : `${pokemon.name}, número ${dex}, todavía no lo tienes`
+      }
+    >
+      {pokemon.primary_image_url ? (
+        <img
+          className={styles.card}
+          src={pokemon.primary_image_url}
+          alt=""
+          loading="lazy"
+        />
+      ) : (
+        <div className={styles.noCard}>
+          <span>Sin carta asignada</span>
+        </div>
+      )}
+
+      <span className={styles.sheen} aria-hidden="true" />
+
+      <footer className={styles.plate}>
+        <span className={styles.dex}>{dex}</span>
+        <span className={styles.name}>{pokemon.name}</span>
+        {pokemon.primary_price_usd !== null && (
+          <span className={styles.price}>${pokemon.primary_price_usd.toFixed(2)}</span>
+        )}
+      </footer>
+    </article>
+  );
+}
+```
+
+El arte de la carta ya es 5:7, la misma proporción del bolsillo, así que llena el hueco sin recortes. La placa inferior flota encima, como la etiqueta de una funda.
+
+- [ ] **Step 3: Reescribir los estilos del bolsillo**
+
+`frontend/app/binder/Pocket.module.css`:
+
+```css
+.pocket {
+  position: relative;
+  display: block;
+  aspect-ratio: 5 / 7;
+  border-radius: var(--radius);
+  background: linear-gradient(170deg, var(--pocket), var(--binder-deep));
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 45%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sleeve-edge) 60%, transparent),
+    0 2px 8px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+  animation: deal 260ms ease-out both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.blank {
+  background: color-mix(in srgb, var(--binder-deep) 70%, transparent);
+  border-style: dashed;
+  box-shadow: none;
+  animation: none;
+}
+
+.card {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+/* El binder se llena de color a medida que la colección crece: lo que
+   todavía no tienes se ve como una carta guardada detrás del plástico. */
+.hunting .card {
+  filter: grayscale(0.75) brightness(0.62) contrast(0.95);
+}
+
+.owned {
+  border-color: color-mix(in srgb, var(--lens) 55%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--lens) 40%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--lens) 25%, transparent),
+    0 4px 14px rgb(0 0 0 / 0.45);
+}
+
+.noCard {
+  display: grid;
+  place-items: center;
+  block-size: 100%;
+  padding: 1rem;
+  text-align: center;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.plate {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem;
+  background: linear-gradient(to top, rgb(6 11 20 / 0.94), rgb(6 11 20 / 0));
+}
+
+.dex {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.name {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--step-0);
+  font-weight: 600;
+}
+
+.price {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  color: var(--shell);
+}
+
+.sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 35%,
+    rgb(255 255 255 / 0.11) 48%,
+    transparent 62%
+  );
+  translate: -110% 0;
+  pointer-events: none;
+}
+
+.pocket:hover .sheen,
+.pocket:focus-within .sheen {
+  transition: translate 700ms ease-out;
+  translate: 110% 0;
+}
+
+@keyframes deal {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+```
+
+- [ ] **Step 4: Corregir el riel**
+
+En `frontend/app/binder/Rail.tsx`, la sección de dinero deja de mostrar un "Invertido $0.00" que no significa nada y pasa a mostrar lo que cuesta completar el proyecto, que es un dato real y útil. Reemplazar la firma y la sección:
+
+```tsx
+type Props = {
+  total: number;
+  conseguidos: number;
+  costoRestanteUsd: number;
+};
+```
+
+```tsx
+      <section className={styles.money}>
+        <p className={styles.moneyLabel}>Completar el 151</p>
+        <p className={styles.moneyValue}>
+          ${costoRestanteUsd.toFixed(2)} <span className={styles.usd}>USD</span>
+        </p>
+        <p className={styles.hint}>Sumando la ruta más económica de cada uno.</p>
+      </section>
+```
+
+- [ ] **Step 5: Corregir el cálculo del progreso**
+
+En `frontend/app/binder/Binder.tsx`, reemplazar el cálculo de `conseguidos` y pasar el costo:
+
+```tsx
+  const conseguidos = pokedex.filter((p) => p.owned_count > 0).length;
+  const costoRestante = pokedex
+    .filter((p) => p.owned_count === 0)
+    .reduce((total, p) => total + (p.primary_price_usd ?? 0), 0);
+```
+
+```tsx
+      <Rail total={pokedex.length} conseguidos={conseguidos} costoRestanteUsd={costoRestante} />
+```
+
+`owned_count` y no `wishlist_count`: tener una ruta de caza no es tener la carta, y confundirlas hacía que el contador dijera 151 de 151 apenas se importaba el Excel.
+
+- [ ] **Step 6: Verificar**
+
+Con el backend arriba y el import hecho, abrir `http://localhost:3000`:
+- El contador dice `000 / 151`, no `151 / 151`.
+- Los bolsillos muestran arte de cartas TCG reales, apagadas en gris.
+- Cada bolsillo lleva su número, su nombre y su precio.
+- El costo de completar el 151 es una cifra distinta de cero.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend
+git commit -m "feat: cartas reales en los bolsillos y progreso honesto"
+```
+
+---
+
 ## Verificación del plan completo
 
 - [ ] `http://localhost:3000` muestra 17 páginas de binder con los 151
