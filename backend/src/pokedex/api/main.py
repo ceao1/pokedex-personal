@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from pokedex.api.routes import catalog
+from pokedex.api.routes import catalog, pokedex
 from pokedex.db import create_pool
 
 
@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Pokédex Viviente", lifespan=lifespan)
 app.include_router(catalog.router)
+app.include_router(pokedex.router)
 
 
 @app.get("/health")
