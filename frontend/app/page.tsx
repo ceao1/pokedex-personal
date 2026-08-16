@@ -3,7 +3,15 @@ import { fetchOtrasCartas, fetchPokedex } from "./lib/api";
 
 export default async function Home() {
   try {
-    const [pokedex, otrasCartas] = await Promise.all([fetchPokedex(), fetchOtrasCartas()]);
+    const pokedex = await fetchPokedex();
+    // "Otras cartas" es información secundaria del riel, no la razón por la
+    // que existe esta pantalla: si `/otras-cartas` falla, el binder sigue
+    // andando con el conteo en 0 en vez de sumarse al agujero que este
+    // proyecto existe para cerrar (mismo criterio que `_firmar_fotos`: un
+    // dato decorativo no tumba la pantalla entera).
+    const otrasCartasCount = await fetchOtrasCartas()
+      .then((cartas) => cartas.length)
+      .catch(() => 0);
     if (pokedex.length === 0) {
       return (
         <main style={{ padding: "3rem", maxWidth: "42ch" }}>
@@ -15,7 +23,7 @@ export default async function Home() {
         </main>
       );
     }
-    return <Binder pokedex={pokedex} otrasCartasCount={otrasCartas.length} />;
+    return <Binder pokedex={pokedex} otrasCartasCount={otrasCartasCount} />;
   } catch {
     return (
       <main style={{ padding: "3rem", maxWidth: "42ch" }}>
