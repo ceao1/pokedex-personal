@@ -3,11 +3,15 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from pokedex.catalog.models import CardRef
+from pokedex.catalog.models import CardRef, CardVariant
 from pokedex.wishlist.models import ExcelOption, ExcelRow, GalleryRow
 from pokedex.wishlist.resolver import VINTAGE_SETS, OptionResolver
 
 SET_151 = "sv03.5"
+
+
+def _variante(tipo: str, subtype: str | None = None) -> CardVariant:
+    return CardVariant(id=f"v-{tipo}-{subtype}", type=tipo, subtype=subtype, raw={})
 
 
 class FakeCatalog:
@@ -24,10 +28,22 @@ class FakeCatalog:
             "basep": [CardRef(id="basep-1", local_id="1", name="Pikachu")],
         }
         self.numero_calls = []
+        # Variantes reales por local_id del set 151, para poder ejercitar la
+        # elección de etiqueta de la opción 1 contra el catálogo (ver
+        # `_resolve_opcion_1`). "099" imita a las 37 cartas ex/Illustration
+        # Rare que no traen impresión `normal`; "150" imita el caso límite en
+        # que ni siquiera hay `holo`.
+        self.variants_by_local_id: dict[str, list[CardVariant]] = {
+            "001": [_variante("normal")],
+            "011": [_variante("normal")],
+            "166": [_variante("holo")],
+            "099": [_variante("holo")],
+            "150": [_variante("reverse")],
+        }
 
     async def find_by_set_and_number(self, set_id: str, local_id: str):
         self.numero_calls.append((set_id, local_id))
-        if set_id == SET_151 and local_id in {"001", "011", "166"}:
+        if set_id == SET_151 and local_id in {"001", "011", "166", "099", "150"}:
             from pokedex.catalog.models import Card
 
             return Card(
@@ -37,6 +53,7 @@ class FakeCatalog:
                 set_name="151",
                 local_id=local_id,
                 raw={},
+                variants=self.variants_by_local_id.get(local_id, []),
             )
         return None
 
@@ -65,6 +82,31 @@ async def test_la_opcion_1_resuelve_por_numero_como_normal():
     assert op1.card_id == "sv03.5-001"
     assert op1.variant_label == "normal"
     assert op1.auto_resolved is False, "resolver por número es determinístico, no heurístico"
+
+
+async def test_la_opcion_1_de_una_carta_sin_normal_resuelve_como_holo():
+    """37 de las 151 filas (ex, Illustration Rare, Special/Ultra Illustration
+    Rare) no traen impresión `normal`. Forzar esa etiqueta dejaría el item
+    sin variante que matchee en el join de `wishlist/repository.py` (ver
+    hallazgo 1b). El resolver debe usar `pick_variant` contra las variantes
+    reales de la carta -- la misma función que decide qué variante marcó el
+    humano -- y elegir la única que de verdad existe."""
+    resolver = OptionResolver(FakeCatalog())
+    resueltas = await resolver.resolve_row(_row(3, "Venusaur ex", opcion_1="Venusaur ex 099/165"))
+    op1 = next(o for o in resueltas if o.source_option == "opcion_1")
+    assert op1.card_id == "sv03.5-099"
+    assert op1.variant_label == "holo"
+
+
+async def test_la_opcion_1_sin_normal_ni_holo_no_asigna_etiqueta():
+    """Caso límite: si el catálogo no trae ni `normal` ni `holo` para la
+    carta, no hay que adivinar una tercera etiqueta -- el item queda
+    resuelto en card_id pero sin variant_label, para revisión manual."""
+    resolver = OptionResolver(FakeCatalog())
+    resueltas = await resolver.resolve_row(_row(150, "Rareza", opcion_1="Rareza 150/165"))
+    op1 = next(o for o in resueltas if o.source_option == "opcion_1")
+    assert op1.card_id == "sv03.5-150"
+    assert op1.variant_label is None
 
 
 async def test_el_numero_se_rellena_a_tres_digitos():

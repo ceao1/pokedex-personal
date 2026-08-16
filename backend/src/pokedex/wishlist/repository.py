@@ -56,10 +56,28 @@ do update set
 # exótica. El orden debe mantenerse en sincronía con
 # `catalog.variants._specificity`, que aplica el mismo criterio en Python
 # para elegir la variante que el usuario marcó.
+#
+# El `case` de abajo es la traducción a SQL de `catalog.variants._matches`
+# (ver el comentario simétrico ahí): esa función es la autoridad sobre qué
+# significa cada `variant_label`, y solo tres de las seis etiquetas viven en
+# la columna `type` -- `unlimited` y `shadowless` viven en `subtype`, y
+# `first_edition` mira el arreglo `stamp`. Si `_matches` cambia, este `case`
+# tiene que cambiar con ella; que no diverjan es lo que impide un bug de
+# "156 de 421 items sin precio".
 _VARIANTE_PREFERIDA = """
     select v.price_usd, v.price_captured_at
     from app.card_variant v
-    where v.card_id = w.card_id and v.type = w.variant_label
+    where v.card_id = w.card_id
+      and case w.variant_label
+            when 'normal'        then v.type = 'normal'
+            when 'reverse'       then v.type = 'reverse'
+            when 'holo'          then v.type = 'holo' and v.subtype is null
+            when 'first_edition' then '1st-edition' = any(v.stamp)
+            when 'shadowless'    then v.subtype = 'shadowless'
+                                       and not ('1st-edition' = any(v.stamp))
+            when 'unlimited'     then v.subtype = 'unlimited'
+            else false
+          end
     order by (v.stamp <> '{}')::int, (v.foil is not null)::int, v.id
     limit 1
 """
@@ -96,7 +114,13 @@ select p.dex_number,
        (array_agg(c.name order by w.source_option)
           filter (where c.image_url is not null))[1] as primary_card_name,
        (array_agg(v.price_usd order by w.source_option)
-          filter (where v.price_usd is not null))[1] as primary_price_usd
+          filter (where v.price_usd is not null))[1] as primary_price_usd,
+       -- Misma máscara de filtro que primary_price_usd: el precio y su
+       -- fecha de congelado (spec §11/§15) tienen que venir del mismo par
+       -- (card_id, variant_label), o la fecha quedaría describiendo un
+       -- precio distinto del que se muestra.
+       (array_agg(v.price_captured_at order by w.source_option)
+          filter (where v.price_usd is not null))[1] as primary_price_captured_at
 from app.pokemon p
 left join app.wishlist_item w on w.dex_number = p.dex_number
 left join app.card c on c.id = w.card_id

@@ -245,6 +245,99 @@ def test_list_pokedex_no_infla_el_conteo_por_variantes_del_mismo_tipo(clean_db):
     assert fila["primary_price_usd"] == Decimal("0.10")
 
 
+def _sembrar_variante(conn, card_id, variant_id, *, tipo, subtype=None, stamp=None, precio="1.00"):
+    conn.execute(
+        """
+        insert into app.card_variant (id, card_id, type, subtype, stamp, price_usd,
+                                       price_captured_at, raw)
+        values (%s, %s, %s, %s, %s, %s, now(), '{}'::jsonb)
+        """,
+        (variant_id, card_id, tipo, subtype, stamp or [], precio),
+    )
+
+
+def test_list_wishlist_resuelve_unlimited_por_subtype(clean_db):
+    """`unlimited` vive en `subtype`, no en `type` (ver `catalog/variants.py`
+    `_matches`); antes del fix, `v.type = w.variant_label` nunca encontraba
+    nada para esta etiqueta."""
+    _sembrar_carta(clean_db)
+    _sembrar_variante(
+        clean_db, "sv03.5-001", "sv03.5-001-unl", tipo="normal", subtype="unlimited", precio="5.00"
+    )
+    repository.upsert_wishlist_item(clean_db, _item(variant_label="unlimited"))
+    fila = repository.list_wishlist(clean_db)[0]
+    assert fila["price_usd"] == Decimal("5.00")
+
+
+def test_list_wishlist_holo_exige_subtype_nulo(clean_db):
+    """Mismo criterio que `_matches`: una variante `holo` con `subtype` no
+    cuenta como el chip Holo (ese es el caso vintage, ver
+    `test_el_chip_moderno_de_holo_no_matchea_vintage` en catalog)."""
+    _sembrar_carta(clean_db)
+    # El id de la variante con subtype (la que NO debe matchear) ordena
+    # primero alfabéticamente a propósito: si el SQL no filtrara por
+    # `subtype is null`, el `order by ... v.id` de desempate la elegiría
+    # igual y el test pasaría por la razón equivocada.
+    _sembrar_variante(
+        clean_db,
+        "sv03.5-001",
+        "sv03.5-001-a-holo-vintage",
+        tipo="holo",
+        subtype="unlimited",
+        precio="99.00",
+    )
+    _sembrar_variante(
+        clean_db, "sv03.5-001", "sv03.5-001-z-holo", tipo="holo", subtype=None, precio="3.00"
+    )
+    repository.upsert_wishlist_item(clean_db, _item(variant_label="holo"))
+    fila = repository.list_wishlist(clean_db)[0]
+    assert fila["price_usd"] == Decimal("3.00")
+
+
+def test_list_wishlist_shadowless_y_first_edition_no_se_solapan(clean_db):
+    """`shadowless` exige que falte el sello '1st-edition'; una variante
+    shadowless que SÍ trae ese sello debe resolver como `first_edition`,
+    nunca como `shadowless` -- confundirlas sería un bug nuevo que el propio
+    hallazgo advierte evitar."""
+    _sembrar_carta(clean_db)
+    _sembrar_variante(
+        clean_db,
+        "sv03.5-001",
+        "sv03.5-001-shadowless",
+        tipo="normal",
+        subtype="shadowless",
+        precio="10.00",
+    )
+    _sembrar_variante(
+        clean_db,
+        "sv03.5-001",
+        "sv03.5-001-1st-shadowless",
+        tipo="normal",
+        subtype="shadowless",
+        stamp=["1st-edition"],
+        precio="500.00",
+    )
+    repository.upsert_wishlist_item(clean_db, _item(variant_label="shadowless"))
+    repository.upsert_wishlist_item(
+        clean_db, _item(variant_label="first_edition", source_option="opcion_2")
+    )
+    filas = {f["variant_label"]: f for f in repository.list_wishlist(clean_db)}
+    assert filas["shadowless"]["price_usd"] == Decimal("10.00")
+    assert filas["first_edition"]["price_usd"] == Decimal("500.00")
+
+
+def test_list_pokedex_tambien_resuelve_unlimited(clean_db):
+    """La misma `_VARIANTE_PREFERIDA` se reusa en `_LIST_POKEDEX`; probamos
+    ambas consultas para no confiar en que compartir el SQL sea suficiente."""
+    _sembrar_carta(clean_db)
+    _sembrar_variante(
+        clean_db, "sv03.5-001", "sv03.5-001-unl", tipo="normal", subtype="unlimited", precio="5.00"
+    )
+    repository.upsert_wishlist_item(clean_db, _item(variant_label="unlimited"))
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["primary_price_usd"] == Decimal("5.00")
+
+
 def test_owned_count_es_cero_mientras_no_haya_captura(clean_db):
     """El contador del dashboard no puede mentir sobre lo que se posee.
     Sin ejemplares capturados en `app.owned_copy`, la respuesta honesta es cero."""

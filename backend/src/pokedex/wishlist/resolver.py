@@ -12,9 +12,9 @@ from decimal import Decimal
 import httpx
 from pydantic import BaseModel
 
-from pokedex.catalog.models import CardRef
+from pokedex.catalog.models import Card, CardRef
 from pokedex.catalog.ports import CatalogPort
-from pokedex.catalog.variants import VariantLabel
+from pokedex.catalog.variants import VariantLabel, pick_variant
 
 from .models import ExcelOption, ExcelRow, GalleryRow
 
@@ -77,7 +77,7 @@ class OptionResolver:
 
         for option in row.options:
             if option.source_option == "opcion_1":
-                resolved = await self._resolve_numbered(option, VariantLabel.NORMAL)
+                resolved = await self._resolve_opcion_1(option)
                 card_id_opcion_1 = resolved.card_id
             elif option.source_option == "opcion_2":
                 resolved = await self._resolve_option_2(option, card_id_opcion_1)
@@ -92,7 +92,17 @@ class OptionResolver:
             resueltas.append(resolved)
         return resueltas
 
-    async def _resolve_numbered(self, option: ExcelOption, variant: VariantLabel) -> ResolvedOption:
+    async def _fetch_card_by_number(
+        self, option: ExcelOption
+    ) -> tuple[ResolvedOption, Card | None]:
+        """Busca la carta del set 151 por el número "NNN/165" del texto.
+
+        Devuelve el `ResolvedOption` base (todavía sin `card_id` ni
+        `variant_label`) junto con la `Card` completa -- o `None` si el texto
+        no traía número, el catálogo respondió "no existe", o no fue
+        alcanzable. El llamador decide qué hacer con la carta; este método
+        solo la busca.
+        """
         match = NUMERO_RE.search(option.raw_text)
         base = ResolvedOption(
             source_option=option.source_option,
@@ -100,7 +110,7 @@ class OptionResolver:
             reference_value_usd=option.reference_value_usd,
         )
         if match is None:
-            return base
+            return base, None
         # El Excel escribe "1/165" y "001/165" indistintamente; TCGdex usa
         # el localId con tres dígitos en este set.
         local_id = match.group(1).zfill(3)
@@ -108,16 +118,40 @@ class OptionResolver:
             card = await self._catalog.find_by_set_and_number(SET_151, local_id)
         except CATALOG_NETWORK_ERRORS:
             base.unreachable = True
-            return base
+            return base, None
         except httpx.HTTPStatusError as exc:
             if not es_error_de_servidor(exc):
                 raise
             base.unreachable = True
-            return base
+            return base, None
+        return base, card
+
+    async def _resolve_numbered(self, option: ExcelOption, variant: VariantLabel) -> ResolvedOption:
+        base, card = await self._fetch_card_by_number(option)
         if card is None:
             return base
         base.card_id = card.id
         base.variant_label = variant.value
+        return base
+
+    async def _resolve_opcion_1(self, option: ExcelOption) -> ResolvedOption:
+        """A diferencia de las demás llamadas a `_resolve_numbered`, acá no
+        se puede asumir una etiqueta fija: la mayoría de las 151 cartas trae
+        una impresión `normal`, pero 37 -- las ex y las Illustration/Ultra/
+        Special Illustration Rare -- solo vienen en `holo` (ver hallazgo 1b).
+        Se usa `pick_variant` -- la misma función que decide qué variante
+        marcó el humano, ver `catalog/variants.py` -- contra las variantes
+        reales que trajo el catálogo, en vez de codificar acá una segunda
+        suposición.
+        """
+        base, card = await self._fetch_card_by_number(option)
+        if card is None:
+            return base
+        base.card_id = card.id
+        for label in (VariantLabel.NORMAL, VariantLabel.HOLO):
+            if pick_variant(card.variants, label) is not None:
+                base.variant_label = label.value
+                break
         return base
 
     async def _resolve_option_2(

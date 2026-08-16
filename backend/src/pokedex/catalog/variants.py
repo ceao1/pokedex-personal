@@ -44,6 +44,15 @@ def parse_variants(payload: dict, captured_at: datetime) -> list[CardVariant]:
 
 
 def _matches(variant: CardVariant, label: VariantLabel) -> bool:
+    """Autoridad sobre qué significa cada `VariantLabel`.
+
+    `wishlist/repository.py` (`_VARIANTE_PREFERIDA`) traduce este `match` a
+    un `case` de SQL para resolver el precio de un item de wishlist sin
+    traer todas las variantes a Python. Si esta función cambia -- una
+    etiqueta nueva, o el criterio de una existente --, ese `case` tiene que
+    cambiar junto con ella; que no diverjan es lo que evita que un
+    `variant_label` deje de encontrar precio en el join.
+    """
     match label:
         case VariantLabel.NORMAL:
             return variant.type == "normal"
