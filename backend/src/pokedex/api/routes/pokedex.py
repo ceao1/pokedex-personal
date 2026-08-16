@@ -80,6 +80,25 @@ class PokemonDetailOut(PokemonOut):
     copies: list[OwnedCopyOut]
 
 
+class OtraCartaOut(BaseModel):
+    """Un ejemplar cuya carta no pertenece al proyecto de los 151 -- de otra
+    generación, sin `dex_number` en el catálogo, o sin carta identificada
+    todavía. Vive en "Otras cartas", no en el binder."""
+
+    id: int
+    card_id: str | None
+    card_name: str | None
+    set_name: str | None
+    local_id: str | None
+    dex_number: int | None
+    variant_label: str | None
+    condition: str | None
+    purchase_price_usd: float | None
+    photo_url: str | None
+    notes: str | None
+    created_at: datetime
+
+
 def _to_float(row: dict) -> dict:
     """`numeric` de Postgres llega como Decimal y JSON no lo serializa.
 
@@ -162,6 +181,19 @@ async def get_pokemon(dex_number: int, request: Request, storage: StorageDep) ->
         options=[WishlistItemOut(**_to_float(o)) for o in opciones],
         copies=copies,
     )
+
+
+@router.get("/otras-cartas", response_model=list[OtraCartaOut])
+async def list_otras_cartas(request: Request, storage: StorageDep) -> list[OtraCartaOut]:
+    """Las páginas del final del binder: ejemplares que el dueño registró
+    pero cuya carta no es de los 151, para que no desaparezcan en silencio."""
+    with request.app.state.pool.connection() as conn:
+        ejemplares = collection_repository.listar_fuera_del_151(conn)
+
+    fotos = await _firmar_fotos(storage, ejemplares)
+    return [
+        OtraCartaOut(**_to_float(e), photo_url=fotos.get(e["photo_front_url"])) for e in ejemplares
+    ]
 
 
 @router.get("/wishlist", response_model=list[WishlistItemOut])

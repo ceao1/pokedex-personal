@@ -140,3 +140,29 @@ def listar_por_dex(conn: Connection, dex_number: int) -> list[dict]:
     `card` que ese modelo no tiene, para que la ficha del Pokémon se dibuje
     sin una segunda consulta."""
     return conn.execute(_LISTAR_POR_DEX, {"dex_number": dex_number}).fetchall()
+
+
+# El binder recorre `app.pokemon` (151 filas): un ejemplar cuya carta no
+# tiene un dex_number entre 1 y 151 no aparece en ninguna consulta ahí y se
+# esfuma en silencio -- el agujero negro que esta consulta cierra. `left
+# join` a `app.card` (no `join`) a propósito: un ejemplar sin `card_id`
+# todavía (capturado con foto y precio, sin resolver) también queda fuera
+# del proyecto y tiene que aparecer, y un `join` liso lo excluiría.
+_LISTAR_FUERA_DEL_151 = """
+select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id, c.dex_number,
+       o.variant_label, o.condition, o.purchase_price_usd,
+       o.photo_front_url, o.photo_thumb_url, o.notes, o.created_at
+from app.owned_copy o
+left join app.card c on c.id = o.card_id
+where (c.dex_number is null or c.dex_number not between 1 and 151)
+  and o.lifecycle_status <> 'vendida'
+order by o.created_at desc, o.id desc
+"""
+
+
+def listar_fuera_del_151(conn: Connection) -> list[dict]:
+    """Los ejemplares cuya carta no pertenece al proyecto de los 151: de otra
+    generación, sin `dex_number` en el catálogo, o sin carta identificada
+    todavía. Excluye las vendidas, igual que `listar_por_dex`. Filas planas,
+    no `OwnedCopy`: traen columnas de `card` que ese modelo no tiene."""
+    return conn.execute(_LISTAR_FUERA_DEL_151).fetchall()

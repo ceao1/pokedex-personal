@@ -212,6 +212,83 @@ def test_get_pokedex_de_un_dex_devuelve_tus_ejemplares_con_foto_firmada(
     assert fake_storage.batch_calls == [[f"{con_foto}/front.jpg"]]
 
 
+def test_get_otras_cartas_devuelve_ejemplares_fuera_del_151_con_foto_firmada(
+    client_con_ejemplares, sembrado, fake_storage
+):
+    sembrado.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, raw)
+        values ('me02.5-008', 'Chikorita', 'me02.5', 'Ascended Heroes', '008', 152, '{}'::jsonb)
+        """
+    )
+    con_foto = uuid4()
+    sembrado.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, photo_front_url, notes)
+        values (%s, 'me02.5-008', %s, 'Chikorita fuera del proyecto')
+        """,
+        (con_foto, f"{con_foto}/front.jpg"),
+    )
+    sembrado.commit()
+
+    response = client_con_ejemplares.get("/otras-cartas")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["card_name"] == "Chikorita"
+    assert body[0]["dex_number"] == 152
+    assert body[0]["photo_url"] is not None
+    assert body[0]["photo_url"].startswith("https://fake.storage.test/download/")
+
+
+def test_get_otras_cartas_no_incluye_un_ejemplar_del_binder(client_con_ejemplares, sembrado):
+    sembrado.execute(
+        "insert into app.pokemon (dex_number, name) values (4, 'Charmander') on conflict do nothing"
+    )
+    sembrado.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, raw)
+        values ('sv03.5-004', 'Charmander', 'sv03.5', '151', '004', 4, '{}'::jsonb)
+        """
+    )
+    sembrado.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-004')",
+        (uuid4(),),
+    )
+    sembrado.commit()
+
+    response = client_con_ejemplares.get("/otras-cartas")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_otras_cartas_un_error_al_firmar_no_la_revienta(
+    client_con_ejemplares, sembrado, fake_storage
+):
+    """Mismo criterio que la ficha: si firmar falla, la fila se devuelve
+    igual con `photo_url: null` en vez de un 500."""
+    sembrado.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, raw)
+        values ('me02.5-008', 'Chikorita', 'me02.5', 'Ascended Heroes', '008', 152, '{}'::jsonb)
+        """
+    )
+    draft = uuid4()
+    sembrado.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, photo_front_url)
+        values (%s, 'me02.5-008', %s)
+        """,
+        (draft, f"{draft}/front.jpg"),
+    )
+    sembrado.commit()
+    fake_storage.fallar_firma_de.add(f"{draft}/front.jpg")
+
+    response = client_con_ejemplares.get("/otras-cartas")
+    assert response.status_code == 200
+    assert response.json()[0]["photo_url"] is None
+
+
 def test_un_error_al_firmar_no_revienta_la_ficha(client_con_ejemplares, sembrado, fake_storage):
     """La foto es decoración de esta pantalla, los datos no: si firmar falla,
     el ejemplar se devuelve con `photo_url: null` en vez de un 500."""

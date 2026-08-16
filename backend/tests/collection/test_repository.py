@@ -2,6 +2,7 @@ from uuid import UUID
 
 from pokedex.collection import repository
 from pokedex.collection.models import OwnedCopyIn
+from pokedex.wishlist import repository as wishlist_repository
 
 
 def test_crear_borrador_dos_veces_no_duplica(clean_db):
@@ -150,3 +151,194 @@ def test_los_ejemplares_traen_lo_necesario_para_dibujarlos(clean_db):
         "created_at",
     ):
         assert campo in ejemplar, f"falta {campo}"
+
+
+# --- listar_fuera_del_151: el agujero negro de las cartas que no son de los 151 ---
+
+
+def _sembrar_carta_sin_dex(conn, card_id="sv03.5-999", nombre="Profesor Oak"):
+    """Una carta del catálogo cuyo `dexId` de TCGdex no trae número -- un
+    entrenador, por ejemplo. `dex_number` queda null."""
+    conn.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, raw)
+        values (%s, %s, 'sv03.5', '151', %s, '{}'::jsonb)
+        on conflict do nothing
+        """,
+        (card_id, nombre, card_id.rsplit("-", 1)[-1]),
+    )
+
+
+def _sembrar_carta_de_otra_generacion(conn, card_id="me02.5-008", nombre="Chikorita", dex=152):
+    """Una carta real fuera del proyecto de los 151: Chikorita es dex 152."""
+    conn.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, raw)
+        values (%s, %s, 'me02.5', 'Ascended Heroes', '008', %s, '{}'::jsonb)
+        on conflict do nothing
+        """,
+        (card_id, nombre, dex),
+    )
+
+
+def test_listar_fuera_del_151_incluye_pokemon_de_otra_generacion(clean_db):
+    from uuid import uuid4
+
+    _sembrar_carta_de_otra_generacion(clean_db)
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'me02.5-008')",
+        (uuid4(),),
+    )
+    fuera = repository.listar_fuera_del_151(clean_db)
+    assert len(fuera) == 1
+    assert fuera[0]["card_name"] == "Chikorita"
+
+
+def test_listar_fuera_del_151_incluye_carta_sin_dex_number(clean_db):
+    from uuid import uuid4
+
+    _sembrar_carta_sin_dex(clean_db)
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-999')",
+        (uuid4(),),
+    )
+    fuera = repository.listar_fuera_del_151(clean_db)
+    assert len(fuera) == 1
+    assert fuera[0]["card_name"] == "Profesor Oak"
+    assert fuera[0]["dex_number"] is None
+
+
+def test_listar_fuera_del_151_incluye_ejemplar_sin_carta_identificada(clean_db):
+    from uuid import uuid4
+
+    draft = uuid4()
+    clean_db.execute("insert into app.owned_copy (client_draft_id) values (%s)", (draft,))
+    fuera = repository.listar_fuera_del_151(clean_db)
+    assert len(fuera) == 1
+    assert fuera[0]["card_id"] is None
+    assert fuera[0]["card_name"] is None
+
+
+def test_listar_fuera_del_151_no_incluye_un_ejemplar_dentro_de_los_151(clean_db):
+    from uuid import uuid4
+
+    _sembrar_pokemon_y_carta(clean_db, 4, "sv03.5-004", "Charmander", "004")
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-004')",
+        (uuid4(),),
+    )
+    assert repository.listar_fuera_del_151(clean_db) == []
+
+
+def test_listar_fuera_del_151_excluye_vendidas(clean_db):
+    from uuid import uuid4
+
+    _sembrar_carta_de_otra_generacion(clean_db)
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, lifecycle_status)
+        values (%s, 'me02.5-008', 'vendida')
+        """,
+        (uuid4(),),
+    )
+    assert repository.listar_fuera_del_151(clean_db) == []
+
+
+def test_listar_fuera_del_151_trae_lo_necesario_para_dibujarla(clean_db):
+    from uuid import uuid4
+
+    _sembrar_carta_de_otra_generacion(clean_db)
+    draft = uuid4()
+    clean_db.execute(
+        """
+        insert into app.owned_copy
+          (client_draft_id, card_id, variant_label, purchase_price_usd, photo_front_url, notes)
+        values (%s, 'me02.5-008', 'holo', 3.00, %s, 'de un intercambio')
+        """,
+        (draft, f"{draft}/front.jpg"),
+    )
+    ejemplar = repository.listar_fuera_del_151(clean_db)[0]
+    for campo in (
+        "id",
+        "card_id",
+        "card_name",
+        "set_name",
+        "local_id",
+        "dex_number",
+        "variant_label",
+        "purchase_price_usd",
+        "photo_front_url",
+        "created_at",
+    ):
+        assert campo in ejemplar, f"falta {campo}"
+    assert ejemplar["card_name"] == "Chikorita"
+    assert ejemplar["dex_number"] == 152
+
+
+def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
+    """El test que impide que vuelva a existir el agujero negro: un ejemplar
+    en cada una de las cuatro situaciones posibles, y ninguno puede faltar
+    ni contarse dos veces al sumar el binder ("dentro") y otras cartas
+    ("fuera")."""
+    from uuid import uuid4
+
+    # dentro de los 151
+    _sembrar_pokemon_y_carta(clean_db, 4, "sv03.5-004", "Charmander", "004")
+    # otra generación: Chikorita, dex 152
+    _sembrar_carta_de_otra_generacion(clean_db)
+    # carta del catálogo sin dex_number (un entrenador)
+    _sembrar_carta_sin_dex(clean_db)
+
+    dentro = uuid4()
+    otra_generacion = uuid4()
+    sin_dex = uuid4()
+    sin_carta = uuid4()
+    vendida = uuid4()
+    id_dentro = clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-004')"
+        " returning id",
+        (dentro,),
+    ).fetchone()["id"]
+    id_otra_generacion = clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'me02.5-008')"
+        " returning id",
+        (otra_generacion,),
+    ).fetchone()["id"]
+    id_sin_dex = clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-999')"
+        " returning id",
+        (sin_dex,),
+    ).fetchone()["id"]
+    id_sin_carta = clean_db.execute(
+        "insert into app.owned_copy (client_draft_id) values (%s) returning id",
+        (sin_carta,),
+    ).fetchone()["id"]
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, lifecycle_status)
+        values (%s, 'sv03.5-004', 'vendida')
+        """,
+        (vendida,),
+    )
+
+    total_no_vendidas = clean_db.execute(
+        "select count(*) as n from app.owned_copy where lifecycle_status <> 'vendida'"
+    ).fetchone()["n"]
+    assert total_no_vendidas == 4, "sanity check del fixture"
+
+    # El lado "dentro" es la consulta real del binder (`owned_count` de
+    # `wishlist.repository.list_pokedex`, que camina las 151 filas de
+    # `app.pokemon`) -- no `listar_por_dex` de un dex puntual, que no es la
+    # vista que perdía al Chikorita.
+    binder_total = sum(p["owned_count"] for p in wishlist_repository.list_pokedex(clean_db))
+    fuera_del_151 = repository.listar_fuera_del_151(clean_db)
+
+    assert binder_total == 1
+    # Identidades, no solo cantidades: dos fallas que se cancelan (un
+    # ejemplar perdido y otro contado dos veces) sumarían igual y este test
+    # tiene que detectarlo igual.
+    assert {e["id"] for e in fuera_del_151} == {id_otra_generacion, id_sin_dex, id_sin_carta}
+    assert id_dentro not in {e["id"] for e in fuera_del_151}
+    assert binder_total + len(fuera_del_151) == total_no_vendidas, (
+        "ningún ejemplar puede quedar en tierra de nadie ni contarse dos veces"
+    )
