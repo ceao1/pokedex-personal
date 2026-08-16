@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from pokedex.catalog.models import CardRef
-from pokedex.wishlist.models import ExcelOption, ExcelRow
+from pokedex.wishlist.models import ExcelOption, ExcelRow, GalleryRow
 from pokedex.wishlist.resolver import VINTAGE_SETS, OptionResolver
 
 SET_151 = "sv03.5"
@@ -106,6 +106,41 @@ async def test_la_opcion_2_reverse_no_repite_la_consulta_al_catalogo():
         _row(11, "Metapod", opcion_1="Metapod 011/165", opcion_2="Reverse holo de 011/165")
     )
     assert fake.numero_calls == [("sv03.5", "011")], "no debe repetir la consulta del reverse"
+
+
+async def test_resolve_gallery_row_holo_para_carta_propia():
+    """Caso general: 'Bulbasaur 151 166/165' es una Illustration Rare propia,
+    igual que la opción 2 no-reverse."""
+    resolver = OptionResolver(FakeCatalog())
+    resuelto = await resolver.resolve_gallery_row(
+        GalleryRow(dex_number=1, pokemon_name="Bulbasaur", raw_text="Bulbasaur 151 166/165")
+    )
+    assert resuelto.card_id == "sv03.5-166"
+    assert resuelto.variant_label == "holo"
+
+
+async def test_resolve_gallery_row_detecta_reverse():
+    """El texto real de la galería para Kadabra es
+    'Kadabra 151 064/165 reverse holo': si se resolviera como 'holo' a
+    secas, en vez de fusionarse con la fila que la opción 2 ya insertó como
+    reverse crearía una fila nueva con una variante distinta -- exactamente
+    la duplicación que este fix debía prevenir."""
+    resolver = OptionResolver(FakeCatalog())
+    resuelto = await resolver.resolve_gallery_row(
+        GalleryRow(
+            dex_number=11, pokemon_name="Metapod", raw_text="Metapod 151 011/165 reverse holo"
+        )
+    )
+    assert resuelto.card_id == "sv03.5-011"
+    assert resuelto.variant_label == "reverse"
+
+
+async def test_resolve_gallery_row_sin_numero_queda_sin_resolver():
+    resolver = OptionResolver(FakeCatalog())
+    resuelto = await resolver.resolve_gallery_row(
+        GalleryRow(dex_number=2, pokemon_name="Ivysaur", raw_text="Ivysaur Southern Islands")
+    )
+    assert resuelto.card_id is None
 
 
 async def test_la_opcion_3_resuelve_por_nombre_dentro_del_set_vintage():

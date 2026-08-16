@@ -21,6 +21,10 @@ SET_151 = "sv03.5"
 
 NUMERO_RE = re.compile(r"(\d{1,3})\s*/\s*165\b")
 REVERSE_RE = re.compile(r"^\s*reverse\s+holo\s+de\b", re.IGNORECASE)
+# La galería no repite el formato de la opción 2 ("Reverse holo de NNN/165");
+# escribe el número primero y "reverse holo" como sufijo suelto (ej.
+# "Kadabra 151 064/165 reverse holo"), así que basta con la palabra.
+GALLERY_REVERSE_RE = re.compile(r"\breverse\b", re.IGNORECASE)
 
 # Texto de la opción 3 -> (set de TCGdex, el texto pedía holo)
 # Exhaustivo: estas siete formas cubren las 151 filas del Excel.
@@ -119,16 +123,25 @@ class OptionResolver:
 
     async def resolve_gallery_row(self, gallery_row: GalleryRow) -> ResolvedOption:
         """La galería solo trae texto y, a veces, un número de colección del
-        set 151 (ej. "Bulbasaur 151 166/165"). Esas cartas son Illustration
-        o Special Illustration Rare, con una única variante `holo` en
-        TCGdex — el mismo caso que la opción 2 no-reverse, así que se reusa
-        `_resolve_numbered` en vez de escribir un segundo parser."""
+        set 151 (ej. "Bulbasaur 151 166/165"). La mayoría son Illustration o
+        Special Illustration Rare con una única variante `holo` en TCGdex —
+        el mismo caso que la opción 2 no-reverse — pero al menos una fila
+        real (Kadabra: "Kadabra 151 064/165 reverse holo") nombra el reverse
+        de la carta normal, que ya insertó la opción 2 como `reverse`; si se
+        etiquetara como `holo` a secas no fusionaría con esa fila y crearía
+        una nueva con una variante distinta. Se reusa `_resolve_numbered` en
+        vez de escribir un segundo parser."""
         option = ExcelOption(
             source_option="galeria",
             raw_text=gallery_row.raw_text,
             reference_value_usd=gallery_row.reference_value_usd,
         )
-        return await self._resolve_numbered(option, VariantLabel.HOLO)
+        variant = (
+            VariantLabel.REVERSE
+            if GALLERY_REVERSE_RE.search(gallery_row.raw_text)
+            else VariantLabel.HOLO
+        )
+        return await self._resolve_numbered(option, variant)
 
     async def _resolve_vintage(self, option: ExcelOption, pokemon_name: str) -> ResolvedOption:
         base = ResolvedOption(
