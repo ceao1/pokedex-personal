@@ -1,6 +1,28 @@
+from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI
 
-app = FastAPI(title="Pokédex Viviente")
+from pokedex.api.routes import catalog
+from pokedex.db import create_pool
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    pool = create_pool()
+    pool.open()
+    pool.wait()
+    app.state.pool = pool
+    app.state.http_client = httpx.AsyncClient(timeout=20)
+    try:
+        yield
+    finally:
+        await app.state.http_client.aclose()
+        pool.close()
+
+
+app = FastAPI(title="Pokédex Viviente", lifespan=lifespan)
+app.include_router(catalog.router)
 
 
 @app.get("/health")
