@@ -17,8 +17,12 @@ export default async function Home() {
         <main style={{ padding: "3rem", maxWidth: "42ch" }}>
           <h1>El binder está vacío</h1>
           <p>
-            Corre el import del Excel para sembrar los 151:{" "}
-            <code>uv run python -m pokedex.cli import-excel ../Pokedex_Viviente_151.xlsx</code>
+            Faltan los 151 casilleros. Siémbralos desde <code>backend/</code>:{" "}
+            <code>PYTHONPATH=src uv run python -m pokedex.cli sembrar</code>
+          </p>
+          <p>
+            Tarda un momento: trae de TCGdex la carta por defecto de cada uno. Tus
+            cartas registradas no se pierden, siguen guardadas.
           </p>
         </main>
       );

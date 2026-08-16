@@ -10,6 +10,7 @@ from pokedex.catalog.tcgdex import TcgdexCatalog
 from pokedex.collection.models import OwnedCopy, OwnedCopyIn
 from pokedex.collection.service import (
     CaptureService,
+    CartaDesconocida,
     FotoNoDisponible,
     IdentificationService,
 )
@@ -77,7 +78,11 @@ def get_service(request: Request) -> CaptureService:
         request.app.state.http_client,
         public_base_url=settings.storage_public_url or None,
     )
-    return CaptureService(storage, request.app.state.pool.connection)
+    catalog = CatalogService(
+        TcgdexCatalog(settings.tcgdex_base_url, request.app.state.http_client),
+        request.app.state.pool.connection,
+    )
+    return CaptureService(storage, request.app.state.pool.connection, catalog)
 
 
 ServiceDep = Annotated[CaptureService, Depends(get_service)]
@@ -112,7 +117,27 @@ async def update_capture(
 ) -> OwnedCopyOut:
     """PATCH parcial: los campos que el celular no manda quedan como estaban.
     Un PATCH vacío (retry de un celular sin cambios) no debe reventar."""
-    copy = await service.registrar(client_draft_id, datos)
+    try:
+        copy = await service.registrar(client_draft_id, datos)
+    except CartaDesconocida as exc:
+        if exc.catalogo_inalcanzable:
+            # 503 y no 422: el dato del cliente puede estar perfecto, solo que
+            # no se pudo comprobar. Decirle que corrija algo correcto sería
+            # peor que pedirle que reintente.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"No se pudo comprobar la carta {exc.card_id}: el catálogo no responde. "
+                    "No se guardó nada. Vuelve a intentarlo en un momento."
+                ),
+            ) from None
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"La carta {exc.card_id} no existe en el catálogo. "
+                "Revisa el set y el número de colección."
+            ),
+        ) from None
     if copy is None:
         raise _no_encontrado(client_draft_id)
     return OwnedCopyOut.from_copy(copy)

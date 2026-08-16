@@ -13,6 +13,7 @@ from uuid import UUID
 
 import httpx
 from psycopg import Connection
+from psycopg.errors import ForeignKeyViolation
 from pydantic import BaseModel
 
 from pokedex.recognition.models import Recognition
@@ -31,6 +32,25 @@ ConnFactory = Callable[[], AbstractContextManager[Connection]]
 _DOWNLOAD_URL_SECONDS = 600
 
 
+class CartaDesconocida(Exception):
+    """El `card_id` que mandó el cliente no está en el catálogo.
+
+    Distingue dos situaciones que no son la misma: la carta no existe, o no
+    se pudo comprobar porque el catálogo no responde. La primera es culpa
+    del dato y se arregla corrigiéndolo; la segunda es pasajera y se arregla
+    reintentando. Confundirlas haría que el dueño corrigiera un set que
+    estaba bien.
+
+    Antes de existir, este caso salía como un 500 con la violación de clave
+    foránea de Postgres en crudo.
+    """
+
+    def __init__(self, card_id: str, *, catalogo_inalcanzable: bool = False) -> None:
+        self.card_id = card_id
+        self.catalogo_inalcanzable = catalogo_inalcanzable
+        super().__init__(card_id)
+
+
 class CaptureUploads(BaseModel):
     front: str
     thumb: str
@@ -42,9 +62,14 @@ class CaptureStart(BaseModel):
 
 
 class CaptureService:
-    def __init__(self, storage: StoragePort, conn_factory: ConnFactory) -> None:
+    def __init__(self, storage: StoragePort, conn_factory: ConnFactory, catalog=None) -> None:
+        # `catalog` es opcional para no obligar a los tests a montarlo cuando
+        # no tocan cartas. Cuando está, `registrar` espeja la carta antes de
+        # guardarla, igual que hace el resto de la app: la primera vez que se
+        # toca una carta, se copia.
         self._storage = storage
         self._conn_factory = conn_factory
+        self._catalog = catalog
 
     @staticmethod
     def _front_path(client_draft_id: UUID) -> str:
@@ -122,9 +147,29 @@ class CaptureService:
             copy = repository.obtener(conn, client_draft_id)
         return await self._con_urls_firmadas(copy)
 
+    async def _asegurar_carta(self, card_id: str) -> None:
+        """Espeja la carta si hace falta. `CatalogService.get_card` devuelve la
+        copia local si ya está, así que esto no cuesta nada en el caso normal."""
+        if self._catalog is None:
+            return
+        try:
+            carta = await self._catalog.get_card(card_id)
+        except httpx.HTTPError as exc:
+            raise CartaDesconocida(card_id, catalogo_inalcanzable=True) from exc
+        if carta is None:
+            raise CartaDesconocida(card_id)
+
     async def registrar(self, client_draft_id: UUID, datos: OwnedCopyIn) -> OwnedCopy | None:
+        if datos.card_id is not None:
+            await self._asegurar_carta(datos.card_id)
         with self._conn_factory() as conn:
-            copy = repository.actualizar(conn, client_draft_id, datos)
+            try:
+                copy = repository.actualizar(conn, client_draft_id, datos)
+            except ForeignKeyViolation as exc:
+                # Red de seguridad: si el espejado no corrió (catálogo no
+                # inyectado) la base sigue rechazando la carta, y el cliente
+                # merece el mismo mensaje claro y no un 500.
+                raise CartaDesconocida(datos.card_id or "desconocida") from exc
         return await self._con_urls_firmadas(copy)
 
     async def listar_pendientes(self) -> list[OwnedCopy]:
