@@ -11,8 +11,13 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from uuid import UUID
 
+import httpx
 from psycopg import Connection
 from pydantic import BaseModel
+
+from pokedex.recognition.models import Recognition
+from pokedex.recognition.ports import RecognitionPort
+from pokedex.recognition.resolver import CardResolver, ResolucionCarta
 
 from . import repository
 from .models import OwnedCopy, OwnedCopyIn
@@ -126,3 +131,68 @@ class CaptureService:
         with self._conn_factory() as conn:
             copies = repository.listar_pendientes(conn)
         return [await self._con_urls_firmadas(c) for c in copies]
+
+
+class FotoNoDisponible(Exception):
+    """El ejemplar existe pero todavía no tiene foto frontal subida --
+    distinto de que el ejemplar no exista (`None`, ver `identificar`)."""
+
+
+class IdentificationResult(BaseModel):
+    reconocido: Recognition
+    resolucion: ResolucionCarta
+
+
+class IdentificationService:
+    """Orquesta `POST /captures/{id}/identificar`: baja la foto ya subida,
+    la manda al `RecognitionPort` y valida la respuesta con `CardResolver`.
+
+    A propósito **no escribe nada en `owned_copy`**: la decisión de aceptar
+    la propuesta sigue siendo del humano (spec §5.2), y escribir acá sería
+    exactamente lo que el spec prohíbe. El único efecto de lado que puede
+    tener es el espejo del catálogo (`app.card`), que ya hace `CardResolver`
+    a través de `CatalogService.get_card` -- lo mismo que `_asegurar_espejo`
+    en `wishlist/service.py`, para que el cliente reciba arte y precio.
+    """
+
+    def __init__(
+        self,
+        storage: StoragePort,
+        recognition: RecognitionPort,
+        resolver: CardResolver,
+        conn_factory: ConnFactory,
+        http_client: httpx.AsyncClient,
+    ) -> None:
+        self._storage = storage
+        self._recognition = recognition
+        self._resolver = resolver
+        self._conn_factory = conn_factory
+        self._http_client = http_client
+
+    async def identificar(self, client_draft_id: UUID) -> IdentificationResult | None:
+        """`None` si el `client_draft_id` no tiene ejemplar (404 para el
+        llamador). Lanza `FotoNoDisponible` si el ejemplar existe pero
+        todavía no tiene foto frontal."""
+        with self._conn_factory() as conn:
+            copy = repository.obtener(conn, client_draft_id)
+        if copy is None:
+            return None
+        if copy.photo_front_url is None:
+            raise FotoNoDisponible(str(client_draft_id))
+
+        signed_url = await self._storage.signed_download_url(
+            copy.photo_front_url, _DOWNLOAD_URL_SECONDS
+        )
+        response = await self._http_client.get(signed_url)
+        response.raise_for_status()
+        image = response.content
+        # No confiar en el content-type de Storage: una subida sin ese
+        # header vuelve como `application/octet-stream` (o similar), y
+        # Gemini lo rechaza o lo lee mal. El path es `front.jpg`, así que
+        # `image/jpeg` es el fallback correcto.
+        content_type = response.headers.get("content-type", "")
+        mime_type = content_type if content_type.startswith("image/") else "image/jpeg"
+
+        reconocido = await self._recognition.identify(image, mime_type)
+        resolucion = await self._resolver.resolver(reconocido)
+        return IdentificationResult(reconocido=reconocido, resolucion=resolucion)

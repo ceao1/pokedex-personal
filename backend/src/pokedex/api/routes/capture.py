@@ -4,10 +4,20 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from pokedex.api.routes.catalog import CardOut
+from pokedex.catalog.service import CatalogService
+from pokedex.catalog.tcgdex import TcgdexCatalog
 from pokedex.collection.models import OwnedCopy, OwnedCopyIn
-from pokedex.collection.service import CaptureService
+from pokedex.collection.service import (
+    CaptureService,
+    FotoNoDisponible,
+    IdentificationService,
+)
 from pokedex.collection.storage import SupabaseStorage
 from pokedex.config import settings
+from pokedex.recognition.gemini import GeminiRecognition
+from pokedex.recognition.models import Recognition
+from pokedex.recognition.resolver import CardResolver
 
 router = APIRouter(prefix="/captures", tags=["captures"])
 
@@ -111,3 +121,90 @@ async def update_capture(
 @router.get("/pendientes", response_model=list[OwnedCopyOut])
 async def list_pendientes(service: ServiceDep) -> list[OwnedCopyOut]:
     return [OwnedCopyOut.from_copy(c) for c in await service.listar_pendientes()]
+
+
+class RecognitionOut(BaseModel):
+    name: str | None
+    set_name: str | None
+    number: str | None
+    rarity: str | None
+    species: str | None
+    dex_number: int | None
+    confidence: float
+    needs_review: bool
+
+    @classmethod
+    def from_recognition(cls, reconocido: Recognition) -> "RecognitionOut":
+        # `raw` nunca cruza al HTTP: es para depurar, no para el cliente.
+        return cls(**reconocido.model_dump(exclude={"raw"}))
+
+
+class IdentificarOut(BaseModel):
+    reconocido: RecognitionOut
+    carta: CardOut | None
+    necesita_revision: bool
+    motivo: str
+
+
+def get_identification_service(request: Request) -> IdentificationService | None:
+    """`None` cuando `GEMINI_API` no está configurada -- el handler responde
+    503 en ese caso y nada más se rompe: el registro a mano sigue exactamente
+    igual. La llave se revisa acá, antes de construir nada, para no gastar
+    ninguna llamada (ni siquiera a Storage) cuando la identificación está
+    apagada."""
+    if not settings.gemini_api:
+        return None
+    http_client = request.app.state.http_client
+    storage = SupabaseStorage(
+        settings.supabase_url,
+        settings.supabase_secret_key,
+        settings.storage_bucket,
+        http_client,
+        public_base_url=settings.storage_public_url or None,
+    )
+    recognition = GeminiRecognition(settings.gemini_api, settings.gemini_model, http_client)
+    catalog = CatalogService(
+        TcgdexCatalog(settings.tcgdex_base_url, http_client), request.app.state.pool.connection
+    )
+    resolver = CardResolver(catalog, request.app.state.pool.connection)
+    return IdentificationService(
+        storage, recognition, resolver, request.app.state.pool.connection, http_client
+    )
+
+
+IdentificationDep = Annotated[IdentificationService | None, Depends(get_identification_service)]
+
+
+@router.post("/{client_draft_id}/identificar", response_model=IdentificarOut)
+async def identificar(client_draft_id: UUID, service: IdentificationDep) -> IdentificarOut:
+    """No escribe nada en `owned_copy`: propone, el humano dispone (spec
+    §5.2). Si la resolución tiene éxito, la carta ya quedó espejada en
+    `app.card` -- lo hace `CardResolver` a través de `CatalogService`, igual
+    que `_asegurar_espejo` en el import del Excel -- así que el cliente
+    recibe arte y precio sin una segunda vuelta."""
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "La identificación por foto está apagada (falta configurar la llave de Gemini). "
+                "Podés registrar la carta a mano."
+            ),
+        )
+    try:
+        resultado = await service.identificar(client_draft_id)
+    except FotoNoDisponible:
+        raise HTTPException(
+            status_code=409, detail="el ejemplar todavía no tiene foto subida"
+        ) from None
+    if resultado is None:
+        raise _no_encontrado(client_draft_id)
+    return IdentificarOut(
+        reconocido=RecognitionOut.from_recognition(resultado.reconocido),
+        carta=(
+            CardOut.from_card(resultado.resolucion.card)
+            if resultado.resolucion.card is not None
+            else None
+        ),
+        necesita_revision=resultado.resolucion.necesita_revision,
+        motivo=resultado.resolucion.motivo,
+    )
