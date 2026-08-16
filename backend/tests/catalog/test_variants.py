@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from pokedex.catalog.variants import VariantLabel, parse_variants, pick_variant
 
 from .loaders import load_fixture
@@ -44,6 +46,27 @@ def test_pick_reverse_prefiere_la_entrada_sin_foil():
     assert elegida is not None
     assert elegida.foil is None
     assert elegida.price_usd == Decimal("0.37")
+
+
+@pytest.mark.parametrize("label", [VariantLabel.NORMAL, VariantLabel.REVERSE])
+def test_pick_variant_no_depende_del_orden_del_arreglo(label):
+    """`pick_variant` debe elegir por especificidad (`_specificity`), no por
+    posición. En el fixture de Bulbasaur, la entrada correcta ya viene
+    primera para NORMAL y para REVERSE, así que una regresión que
+    reemplazara `min(candidatas, key=_specificity)` por `candidatas[0]`
+    pasaría inadvertida si solo se prueba con el orden original: hay que
+    invertir el arreglo para exponerla. Sin este test, la trampa de precio
+    280x de Bulbasaur (sello vs. sin sello) podría reaparecer sin que nada
+    lo detecte."""
+    variants = parse_variants(load_fixture("card_sv03.5-001"), CAPTURED_AT)
+    original = pick_variant(variants, label)
+    invertida = pick_variant(list(reversed(variants)), label)
+    assert original is not None
+    assert invertida is not None
+    assert original.id == invertida.id, (
+        f"pick_variant({label!r}) depende del orden del arreglo: "
+        f"orden original eligió {original.id!r}, orden invertido eligió {invertida.id!r}"
+    )
 
 
 def test_pick_first_edition_en_vintage():

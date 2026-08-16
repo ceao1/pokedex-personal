@@ -37,13 +37,29 @@ async def test_al_menos_una_variante_moderna_sigue_teniendo_precio():
 
 
 async def test_las_subclaves_de_tcgplayer_siguen_llamandose_igual():
-    card = await _get("sv03.5-001")
-    vistas = set()
-    for variant in card.variants:
-        block = (variant.raw.get("pricing") or {}).get("tcgplayer") or {}
-        vistas.update(k for k in block if k not in {"unit", "updated"})
-    conocidas = set(TCGPLAYER_SUBKEY_BY_TYPE.values())
-    assert vistas & conocidas, f"sub-claves desconocidas: {vistas}"
+    """Cada sub-clave de `TCGPLAYER_SUBKEY_BY_TYPE` tiene que verse al menos
+    una vez en la API real. `sv03.5-001` (Bulbasaur) solo expone `normal` y
+    `reverse-holofoil`; nunca trae `holofoil`. Probar solo esa carta no
+    detectaría un cambio de nombre en `holofoil`, la sub-clave de la que
+    dependen todos los precios holo y vintage. Se agrega `sv03.5-199`
+    (Charizard ex, única variante holo) para cubrirla también."""
+    bulbasaur = await _get("sv03.5-001")
+    charizard_ex = await _get("sv03.5-199")
+
+    vistas_por_carta: dict[str, set[str]] = {}
+    for card in (bulbasaur, charizard_ex):
+        claves = set()
+        for variant in card.variants:
+            block = (variant.raw.get("pricing") or {}).get("tcgplayer") or {}
+            claves.update(k for k in block if k not in {"unit", "updated"})
+        vistas_por_carta[card.id] = claves
+
+    vistas = set().union(*vistas_por_carta.values())
+    esperadas = set(TCGPLAYER_SUBKEY_BY_TYPE.values())
+    faltantes = esperadas - vistas
+    assert not faltantes, (
+        f"sub-claves ausentes en la API real: {faltantes}. Vistas por carta: {vistas_por_carta}"
+    )
 
 
 async def test_la_url_de_imagen_construida_responde_200():
