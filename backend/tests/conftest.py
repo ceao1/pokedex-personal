@@ -56,9 +56,9 @@ def clean_db(db_conn):
     db_conn.commit()
     yield db_conn
     # Trunca también al final: si no, lo que el último test dejó commiteado
-    # (ej. `conn.commit()` dentro de un `ImportService.import_workbook`)
-    # sobrevive a `db_conn`'s rollback-on-exit y contamina la próxima corrida
-    # de la suite completa.
+    # (ej. `conn.commit()` dentro de un `SeedService.sembrar`) sobrevive a
+    # `db_conn`'s rollback-on-exit y contamina la próxima corrida de la
+    # suite completa.
     #
     # Si el test dejó la transacción abortada (ej. probó una violación de
     # constraint con `pytest.raises` sin volver a hacer rollback), el

@@ -1,6 +1,6 @@
 """Comandos de línea de comandos.
 
-uv run python -m pokedex.cli import-excel ../Pokedex_Viviente_151.xlsx
+uv run python -m pokedex.cli sembrar
 """
 
 import sys
@@ -35,31 +35,29 @@ from pokedex.catalog.service import CatalogService  # noqa: E402
 from pokedex.catalog.tcgdex import TcgdexCatalog  # noqa: E402
 from pokedex.config import settings  # noqa: E402
 from pokedex.db import create_pool  # noqa: E402
-from pokedex.wishlist.service import ImportService  # noqa: E402
+from pokedex.wishlist.seed import SeedService  # noqa: E402
 
 
-async def _import_excel(path: str) -> int:
+async def _sembrar() -> int:
     pool = create_pool()
     pool.open()
     pool.wait()
     async with httpx.AsyncClient(timeout=30) as client:
         catalog = CatalogService(TcgdexCatalog(settings.tcgdex_base_url, client), pool.connection)
-        summary = await ImportService(catalog, pool.connection).import_workbook(path)
+        summary = await SeedService(catalog, pool.connection).sembrar()
     pool.close()
     print(
         f"Pokémon sembrados: {summary.pokemon}\n"
-        f"Items creados: {summary.items_creados}\n"
-        f"Items ya existentes: {summary.items_actualizados}\n"
-        f"Opciones sin resolver: {summary.sin_resolver}\n"
-        f"Opciones saltadas por catálogo inalcanzable: {summary.catalogo_inalcanzable}"
+        f"Cartas por defecto espejadas: {summary.cartas_espejadas}\n"
+        f"Cartas saltadas por catálogo inalcanzable: {summary.catalogo_inalcanzable}"
     )
     if summary.catalogo_inalcanzable > 0:
         print(
-            "\nImport parcial: el catálogo (TCGdex) no respondió para "
-            f"{summary.catalogo_inalcanzable} opciones. No se guardó nada a medias "
-            "-- esas opciones se saltaron por completo. Vuelve a correr este mismo "
+            "\nSiembra parcial: el catálogo (TCGdex) no respondió para "
+            f"{summary.catalogo_inalcanzable} cartas. No se guardó nada a medias "
+            "-- esas cartas se saltaron por completo. Vuelve a correr este mismo "
             "comando cuando el catálogo esté disponible para completarlas; lo ya "
-            "resuelto no se toca."
+            "espejado no se toca."
         )
     return 0
 
@@ -67,11 +65,10 @@ async def _import_excel(path: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pokedex")
     sub = parser.add_subparsers(dest="command", required=True)
-    importar = sub.add_parser("import-excel", help="siembra el checklist desde el Excel")
-    importar.add_argument("path")
+    sub.add_parser("sembrar", help="siembra los 151 Pokémon y espeja su carta por defecto")
     args = parser.parse_args(argv)
-    if args.command == "import-excel":
-        return asyncio.run(_import_excel(args.path))
+    if args.command == "sembrar":
+        return asyncio.run(_sembrar())
     return 1
 
 

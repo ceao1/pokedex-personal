@@ -151,8 +151,9 @@ class IdentificationService:
     la propuesta sigue siendo del humano (spec §5.2), y escribir acá sería
     exactamente lo que el spec prohíbe. El único efecto de lado que puede
     tener es el espejo del catálogo (`app.card`), que ya hace `CardResolver`
-    a través de `CatalogService.get_card` -- lo mismo que `_asegurar_espejo`
-    en `wishlist/service.py`, para que el cliente reciba arte y precio.
+    a través de `CatalogService.get_card` -- lo mismo que `wishlist/seed.py`
+    hace para cada carta por defecto del 151, para que el cliente reciba
+    arte y precio.
     """
 
     def __init__(
