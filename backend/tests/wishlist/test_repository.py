@@ -175,6 +175,42 @@ def test_la_ruta_preferida_es_la_opcion_1_y_no_otra(clean_db):
     )
 
 
+def _sembrar_dos_variantes_del_mismo_tipo(conn, card_id="sv03.5-001"):
+    """(card_id, type) no es único: Bulbasaur tiene una variante `normal`
+    simple y otra con sello de set, ambas de type='normal'."""
+    conn.execute(
+        """
+        insert into app.card_variant
+          (id, card_id, type, stamp, price_usd, price_captured_at, raw)
+        values
+          (%(card_id)s || '-normal', %(card_id)s, 'normal', '{}', 0.10, now(), '{}'::jsonb),
+          (%(card_id)s || '-normal-sello', %(card_id)s, 'normal', '{set-logo}', 28.00, now(),
+           '{}'::jsonb)
+        """,
+        {"card_id": card_id},
+    )
+
+
+def test_list_wishlist_no_duplica_por_variantes_del_mismo_tipo(clean_db):
+    """(card_id, type) no es único (ver `_sembrar_dos_variantes_del_mismo_tipo`);
+    el join no debe multiplicar la fila del item."""
+    _sembrar_carta(clean_db)
+    _sembrar_dos_variantes_del_mismo_tipo(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    filas = repository.list_wishlist(clean_db)
+    assert len(filas) == 1
+    assert filas[0]["price_usd"] == Decimal("0.10"), "debe preferir la variante sin sello"
+
+
+def test_list_pokedex_no_infla_el_conteo_por_variantes_del_mismo_tipo(clean_db):
+    _sembrar_carta(clean_db)
+    _sembrar_dos_variantes_del_mismo_tipo(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["wishlist_count"] == 1
+    assert fila["primary_price_usd"] == Decimal("0.10")
+
+
 def test_owned_count_es_cero_mientras_no_haya_captura(clean_db):
     """El contador del dashboard no puede mentir sobre lo que se posee.
     `app.owned_copy` no existe todavía, así que la respuesta honesta es cero."""

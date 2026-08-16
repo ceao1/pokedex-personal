@@ -44,20 +44,35 @@ do update set
     updated_at          = now()
 """
 
-_LIST_WISHLIST = """
+# `(card_id, type)` no es único: una carta puede tener una variante `normal`
+# simple y otra con sello o foil, ambas del mismo `type`. Un `left join` liso
+# contra `app.card_variant` multiplicaría la fila del item por cada una. Se
+# usa `left join lateral ... limit 1` (una subconsulta correlacionada) para
+# que cada item aporte a lo sumo una fila de variante, eligiendo la menos
+# exótica. El orden debe mantenerse en sincronía con
+# `catalog.variants._specificity`, que aplica el mismo criterio en Python
+# para elegir la variante que el usuario marcó.
+_VARIANTE_PREFERIDA = """
+    select v.price_usd, v.price_captured_at
+    from app.card_variant v
+    where v.card_id = w.card_id and v.type = w.variant_label
+    order by (v.stamp <> '{}')::int, (v.foil is not null)::int, v.id
+    limit 1
+"""
+
+_LIST_WISHLIST = f"""
 select w.id, w.dex_number, w.card_id, w.variant_label, w.raw_text, w.source_option,
        w.auto_resolved, w.is_favorite, w.status, w.reference_value_usd,
        c.name as card_name, c.image_url, c.rarity, c.set_name,
        v.price_usd, v.price_captured_at
 from app.wishlist_item w
 left join app.card c on c.id = w.card_id
-left join app.card_variant v
-       on v.card_id = w.card_id and v.type = w.variant_label
+left join lateral ({_VARIANTE_PREFERIDA}) v on true
 where (%(dex_number)s::integer is null or w.dex_number = %(dex_number)s::integer)
 order by w.dex_number, w.source_option
 """
 
-_LIST_POKEDEX = """
+_LIST_POKEDEX = f"""
 select p.dex_number,
        p.name,
        count(w.id) as wishlist_count,
@@ -79,7 +94,7 @@ select p.dex_number,
 from app.pokemon p
 left join app.wishlist_item w on w.dex_number = p.dex_number
 left join app.card c on c.id = w.card_id
-left join app.card_variant v on v.card_id = w.card_id and v.type = w.variant_label
+left join lateral ({_VARIANTE_PREFERIDA}) v on true
 group by p.dex_number, p.name
 order by p.dex_number
 """
