@@ -214,13 +214,9 @@ async def test_el_import_siembra_los_151_pokemon(conn_factory, clean_db):
 async def test_el_import_no_crea_ejemplares(conn_factory, clean_db):
     """Restricción global: la columna ✔ del Excel se ignora por completo.
 
-    `app.owned_copy` no existe en ningún plan ejecutado todavía (llega con el
-    plan de captura). Este test se deja en skip, con la tabla nombrada
-    explícitamente, para que se vuelva un test real y ejecutable el día que
-    esa tabla exista — mientras tanto la restricción sigue cubierta por
-    `test_la_columna_de_check_se_ignora` en `tests/wishlist/test_excel.py`.
+    El import siembra checklist y wishlist pero nunca escribe en
+    `app.owned_copy` — esa tabla solo se llena por el flujo de captura.
     """
-    pytest.skip("app.owned_copy no existe todavía (plan de captura pendiente)")
     service = ImportService(FakeCatalogService(clean_db), conn_factory)
     await service.import_workbook(XLSX)
     total = clean_db.execute("select count(*) as n from app.owned_copy").fetchone()["n"]

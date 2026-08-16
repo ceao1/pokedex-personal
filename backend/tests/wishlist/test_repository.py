@@ -11,11 +11,11 @@ def _sembrar_carta(conn, card_id="sv03.5-001", dex=1, nombre="Bulbasaur"):
     )
     conn.execute(
         """
-        insert into app.card (id, name, set_id, set_name, local_id, image_url, raw)
-        values (%s, %s, 'sv03.5', '151', '001', 'https://x/001/high.png', '{}'::jsonb)
+        insert into app.card (id, name, set_id, set_name, local_id, image_url, dex_number, raw)
+        values (%s, %s, 'sv03.5', '151', '001', 'https://x/001/high.png', %s, '{}'::jsonb)
         on conflict do nothing
         """,
-        (card_id, nombre),
+        (card_id, nombre, dex),
     )
 
 
@@ -247,8 +247,52 @@ def test_list_pokedex_no_infla_el_conteo_por_variantes_del_mismo_tipo(clean_db):
 
 def test_owned_count_es_cero_mientras_no_haya_captura(clean_db):
     """El contador del dashboard no puede mentir sobre lo que se posee.
-    `app.owned_copy` no existe todavía, así que la respuesta honesta es cero."""
+    Sin ejemplares capturados en `app.owned_copy`, la respuesta honesta es cero."""
     _sembrar_carta(clean_db)
     repository.upsert_wishlist_item(clean_db, _item())
     fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
     assert fila["owned_count"] == 0
+
+
+def test_owned_count_cuenta_ejemplares_reales(clean_db):
+    _sembrar_carta(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["owned_count"] == 0
+
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id)
+        values ('66666666-6666-6666-6666-666666666666', 'sv03.5-001')
+        """
+    )
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["owned_count"] == 1
+
+
+def test_una_carta_vendida_no_cuenta_como_conseguida(clean_db):
+    _sembrar_carta(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, lifecycle_status)
+        values ('77777777-7777-7777-7777-777777777777', 'sv03.5-001', 'vendida')
+        """
+    )
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["owned_count"] == 0
+
+
+def test_dos_ejemplares_de_la_misma_carta_cuentan_dos(clean_db):
+    """Un duplicado es un ejemplar más, no un Pokémon más — el progreso del
+    151 se calcula sobre Pokémon distintos, no sobre este conteo."""
+    _sembrar_carta(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    for uuid_ in ("88888888-8888-8888-8888-888888888888",
+                  "99999999-9999-9999-9999-999999999999"):
+        clean_db.execute(
+            "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-001')",
+            (uuid_,),
+        )
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["owned_count"] == 2

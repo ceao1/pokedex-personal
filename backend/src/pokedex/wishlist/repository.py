@@ -81,11 +81,13 @@ select p.dex_number,
        p.name,
        count(w.id) as wishlist_count,
        count(w.id) filter (where w.card_id is null) as sin_resolver,
-       -- Ejemplares en posesión. Hoy siempre cero porque `app.owned_copy` no
-       -- existe todavía: el flujo de captura llega en un plan posterior. Vive
-       -- aquí, y no como default del modelo, para que activarlo sea cambiar
-       -- esta línea por el count real y nada más.
-       0::int as owned_count,
+       -- Ejemplares en posesión, excluyendo los vendidos. Subconsulta escalar
+       -- y no join: un join multiplicaría las filas ya agrupadas por p.dex_number.
+       (select count(*)
+          from app.owned_copy o
+          join app.card oc on oc.id = o.card_id
+         where oc.dex_number = p.dex_number
+           and o.lifecycle_status <> 'vendida') as owned_count,
        -- Carta y precio de la ruta preferida. `source_option` ordena
        -- alfabéticamente y 'opcion_1' es la primera, así que esto devuelve la
        -- ruta económica del set 151 cuando resolvió.
