@@ -46,14 +46,15 @@ Dos errores de diseño, los dos míos:
 
 ---
 
-## Task 1: El catálogo sabe buscar sets por su tamaño
+## Task 1: El catálogo sabe buscar sets por su código y por su tamaño
 
 **Files:**
 - Modify: `backend/src/pokedex/catalog/ports.py`, `tcgdex.py`, `service.py`
 - Test: `backend/tests/catalog/test_tcgdex.py`, `test_service.py`
 
 **Interfaces:**
-- `CatalogPort.list_sets() -> list[SetRef]` con `SetRef(id, name, total)` — si ya existe, reutilizarlo
+- `CatalogPort.list_sets() -> list[SetRef]` con `SetRef(id, name, total, abbreviation)` — si ya existe, ampliarlo
+- `CatalogService.set_por_codigo(codigo: str) -> SetRef | None`, cacheado
 - `CatalogService.sets_por_total(total: int) -> list[SetRef]`, cacheado
 
 - [ ] **Step 1: Tests**
@@ -64,11 +65,11 @@ Ojo: la abreviatura vive en el **detalle** de cada set, no en el listado. Traer 
 
 - [ ] **Step 2: Implementar**
 
-`GET /v2/en/sets` devuelve 218 entradas con `{id, name, cardCount}`. Cachear en memoria como ya hace `list_set_cards`.
+`GET /v2/en/sets` devuelve 218 entradas con `{id, name, cardCount}` — **sin** la abreviatura, que solo aparece en `GET /v2/en/sets/{id}` bajo `abbreviation.official`. Cachear en memoria como ya hace `list_set_cards`.
 
 ---
 
-## Task 2: Resolver por número impreso
+## Task 2: Resolver por lo impreso en la carta
 
 Esta es la task que arregla el problema.
 
