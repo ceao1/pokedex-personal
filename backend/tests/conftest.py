@@ -52,4 +52,10 @@ def db_conn():
 def clean_db(db_conn):
     db_conn.execute("truncate app.card, app.pokemon, app.wishlist_item cascade")
     db_conn.commit()
-    return db_conn
+    yield db_conn
+    # Trunca también al final: si no, lo que el último test dejó commiteado
+    # (ej. `conn.commit()` dentro de un `ImportService.import_workbook`)
+    # sobrevive a `db_conn`'s rollback-on-exit y contamina la próxima corrida
+    # de la suite completa.
+    db_conn.execute("truncate app.card, app.pokemon, app.wishlist_item cascade")
+    db_conn.commit()
