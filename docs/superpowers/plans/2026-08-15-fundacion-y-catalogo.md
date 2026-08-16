@@ -243,7 +243,7 @@ supabase status
 
 `supabase status` imprime la URL de la API (por defecto `http://127.0.0.1:54321`), la URL de la base (`postgresql://postgres:postgres@127.0.0.1:54322/postgres`) y las llaves locales. Anotar la llave publicable: la necesita el test de la Task 2.
 
-Si `supabase` no está instalado: `brew install supabase/tap/supabase`.
+Si `supabase` no está instalado: `brew install supabase/tap/supabase`. **`supabase start` necesita Docker corriendo** — es el único paso del plan que puede fallar por algo ajeno al código, con un error de conexión al daemon que no dice claramente eso.
 
 - [ ] **Step 10: Verificar que la base responde**
 
@@ -512,6 +512,9 @@ def test_rls_habilitada_en_las_tablas_del_catalogo(db_conn):
 
 
 def test_el_precio_y_su_fecha_van_juntos(db_conn):
+    # Tras la CheckViolation la transacción queda abortada: no agregar
+    # aserciones después del bloque `raises`, fallarían por eso y no por
+    # lo que quieran verificar. El fixture hace rollback al terminar.
     db_conn.execute(
         """
         insert into app.card (id, name, set_id, set_name, local_id, raw)
@@ -631,40 +634,59 @@ from pokedex.catalog.pricing import extract_price_usd
 
 from .loaders import load_fixture
 
+# Se selecciona por variantId y no por atributos: varias entradas comparten
+# `type`, así que un filtro por criterios acertaría solo por el orden del
+# arreglo. Estos IDs están congelados en los fixtures de la Task 4.
+BULBASAUR_NORMAL = "endfynwn4n10gzq"
+BULBASAUR_REVERSE = "cm4kqul3x1bwlz1f"
+BULBASAUR_NORMAL_SET_LOGO = "3takscxpcqodqyjzqnsbuwq6"
+CHARIZARD_EX_HOLO = "jr7oetx1mqug9"
+CHARIZARD_BASE_1ST_ED = "mtltux8qtgdu4exu903oasum21juxbvx6lx"
 
-def _variant(card_name: str, **criterios):
-    """Primera variante del fixture que cumple todos los criterios."""
+
+def _variant(card_name: str, variant_id: str) -> dict:
     card = load_fixture(card_name)
     for variant in card["variants_detailed"]:
-        if all(variant.get(k) == v for k, v in criterios.items()):
+        if variant.get("variantId") == variant_id:
             return variant
-    raise AssertionError(f"no hay variante {criterios} en {card_name}")
+    raise AssertionError(f"{card_name} no tiene la variante {variant_id}")
+
+
+def test_los_fixtures_tienen_las_variantes_que_los_tests_esperan():
+    """Si se regraban los fixtures y TCGdex cambió los variantId, falla aquí
+    con un mensaje claro en vez de en cada test de precio."""
+    _variant("card_sv03.5-001", BULBASAUR_NORMAL)
+    _variant("card_sv03.5-001", BULBASAUR_REVERSE)
+    _variant("card_sv03.5-001", BULBASAUR_NORMAL_SET_LOGO)
+    _variant("card_sv03.5-199", CHARIZARD_EX_HOLO)
+    _variant("card_base1-4", CHARIZARD_BASE_1ST_ED)
 
 
 def test_holo_lee_la_subclave_holofoil():
-    variant = _variant("card_sv03.5-199", type="holo")
+    variant = _variant("card_sv03.5-199", CHARIZARD_EX_HOLO)
     assert extract_price_usd(variant) == Decimal("371.66")
 
 
 def test_normal_lee_la_subclave_normal_y_no_la_de_reverse():
-    variant = _variant("card_sv03.5-001", type="normal", stamp=None)
+    variant = _variant("card_sv03.5-001", BULBASAUR_NORMAL)
     assert extract_price_usd(variant) == Decimal("0.25")
 
 
 def test_reverse_lee_la_subclave_reverse_holofoil():
-    variant = _variant("card_sv03.5-001", type="reverse", foil=None)
+    """Mismo bloque `tcgplayer` que la normal, distinta sub-clave."""
+    variant = _variant("card_sv03.5-001", BULBASAUR_REVERSE)
     assert extract_price_usd(variant) == Decimal("0.38")
 
 
 def test_sin_bloque_tcgplayer_no_hay_precio():
     """La variante con sello tiene precio en Cardmarket pero no en TCGplayer.
     Por la decisión de moneda única no se usa EUR como respaldo."""
-    variant = _variant("card_sv03.5-001", stamp=["set-logo"])
+    variant = _variant("card_sv03.5-001", BULBASAUR_NORMAL_SET_LOGO)
     assert extract_price_usd(variant) is None
 
 
 def test_variante_sin_pricing_no_tiene_precio():
-    variant = _variant("card_base1-4", subtype="shadowless", stamp=["1st-edition"])
+    variant = _variant("card_base1-4", CHARIZARD_BASE_1ST_ED)
     assert extract_price_usd(variant) is None
 
 
@@ -673,7 +695,7 @@ def test_tipo_desconocido_no_revienta():
 
 
 def test_devuelve_decimal_y_no_float():
-    variant = _variant("card_sv03.5-001", type="normal", stamp=None)
+    variant = _variant("card_sv03.5-001", BULBASAUR_NORMAL)
     assert isinstance(extract_price_usd(variant), Decimal)
 ```
 
@@ -839,6 +861,14 @@ def test_pick_shadowless_excluye_la_de_primera_edicion():
 def test_pick_devuelve_none_si_no_hay_coincidencia():
     variants = parse_variants(load_fixture("card_sv03.5-199"), CAPTURED_AT)
     assert pick_variant(variants, VariantLabel.SHADOWLESS) is None
+
+
+def test_el_chip_moderno_de_holo_no_matchea_vintage():
+    """Todas las holo de Base Set tienen subtype, así que el chip Holo no
+    aplica. Es la otra mitad de la exclusividad de grupos del spec §6.2:
+    sin este test, aflojar _matches pasaría inadvertido."""
+    variants = parse_variants(load_fixture("card_base1-4"), CAPTURED_AT)
+    assert pick_variant(variants, VariantLabel.HOLO) is None
 ```
 
 - [ ] **Step 2: Correr y verificar que fallan**
@@ -1734,14 +1764,52 @@ Expected: los 4 PASS
 `backend/tests/api/test_catalog_routes.py`:
 
 ```python
+from contextlib import contextmanager
+from datetime import UTC, datetime
+
+import pytest
 from fastapi.testclient import TestClient
 
 from pokedex.api.main import app
+from pokedex.api.routes.catalog import get_service
+from pokedex.catalog.service import CatalogService
+from pokedex.catalog.tcgdex import parse_card
+
+from ..catalog.loaders import load_fixture
+
+CAPTURED_AT = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
 
-def test_get_card_devuelve_la_ficha(clean_db):
-    with TestClient(app) as client:
-        response = client.get("/catalog/cards/sv03.5-001")
+@pytest.fixture()
+def client(clean_db):
+    """Cliente con el servicio sustituido por un catálogo falso.
+
+    Estos tests verifican ruteo y serialización, no la integración con
+    TCGdex; esa la cubren el test de contrato y la prueba manual del
+    Step 11. Sustituir la dependencia mantiene la suite offline, que es
+    una restricción global de este plan.
+    """
+    card = parse_card(load_fixture("card_sv03.5-001"), CAPTURED_AT)
+
+    class FakeCatalog:
+        async def get_card(self, card_id: str):
+            return card if card_id == card.id else None
+
+        async def find_by_set_and_number(self, set_id: str, local_id: str):
+            return card if (set_id, local_id) == (card.set_id, card.local_id) else None
+
+    @contextmanager
+    def conn_factory():
+        yield clean_db
+
+    app.dependency_overrides[get_service] = lambda: CatalogService(FakeCatalog(), conn_factory)
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+def test_get_card_devuelve_la_ficha(client):
+    response = client.get("/catalog/cards/sv03.5-001")
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == "sv03.5-001"
@@ -1750,27 +1818,31 @@ def test_get_card_devuelve_la_ficha(clean_db):
     assert len(body["variants"]) >= 1
 
 
-def test_get_card_inexistente_devuelve_404(clean_db):
-    with TestClient(app) as client:
-        response = client.get("/catalog/cards/set-que-no-existe-999")
+def test_get_card_inexistente_devuelve_404(client):
+    response = client.get("/catalog/cards/set-que-no-existe-999")
     assert response.status_code == 404
 
 
-def test_get_por_set_y_numero(clean_db):
-    with TestClient(app) as client:
-        response = client.get("/catalog/sets/sv03.5/001")
+def test_get_por_set_y_numero(client):
+    response = client.get("/catalog/sets/sv03.5/001")
     assert response.status_code == 200
     assert response.json()["id"] == "sv03.5-001"
 
 
-def test_la_ficha_no_expone_el_payload_crudo(clean_db):
+def test_la_ficha_no_expone_el_payload_crudo(client):
     """`raw` es detalle de implementación; no se sirve por HTTP."""
-    with TestClient(app) as client:
-        body = client.get("/catalog/cards/sv03.5-001").json()
+    body = client.get("/catalog/cards/sv03.5-001").json()
     assert "raw" not in body
+
+
+def test_los_precios_llegan_por_variante(client):
+    variantes = {v["id"]: v for v in client.get("/catalog/cards/sv03.5-001").json()["variants"]}
+    assert variantes["endfynwn4n10gzq"]["price_usd"] == 0.25
+    assert variantes["cm4kqul3x1bwlz1f"]["price_usd"] == 0.38
+    assert variantes["3takscxpcqodqyjzqnsbuwq6"]["price_usd"] is None
 ```
 
-Estos tests pegan a la red la primera vez (el espejo está vacío) y salen de la base a partir de ahí. Es intencional: son la verificación de punta a punta del plan.
+Ningún test pega a la red: el catálogo está sustituido por un fake y el espejo escribe en la base local.
 
 - [ ] **Step 6: Correr y verificar que fallan**
 
@@ -1949,7 +2021,7 @@ git commit -m "feat: servicio de espejo perezoso y endpoints del catálogo"
 
 Al terminar las diez tasks debe cumplirse:
 
-- [ ] `uv run pytest` pasa entero y no toca la red salvo en los tests de rutas
+- [ ] `uv run pytest` pasa entero **sin red** (verificable desconectando el wifi)
 - [ ] `uv run pytest -m contract` pasa contra la API real
 - [ ] `supabase db advisors` no reporta hallazgos de seguridad
 - [ ] `GET /catalog/cards/sv03.5-001` responde con precios en `normal` (≈0.25) y `reverse` (≈0.38), y sin precio en la variante con `stamp: ["set-logo"]`
