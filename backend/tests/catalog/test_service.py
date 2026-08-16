@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from pokedex.catalog.models import CardRef
+from pokedex.catalog.models import CardRef, SetRef
 from pokedex.catalog.service import CatalogService
 from pokedex.catalog.tcgdex import parse_card
 
@@ -15,12 +15,22 @@ CAPTURED_AT = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 class FakeCatalog:
     """Fake del CatalogPort que cuenta las llamadas."""
 
-    def __init__(self, cards: dict, set_cards: dict | None = None):
+    def __init__(
+        self,
+        cards: dict,
+        set_cards: dict | None = None,
+        sets: list[SetRef] | None = None,
+        detalles: dict[str, SetRef] | None = None,
+    ):
         self._cards = cards
         self._set_cards = set_cards or {}
+        self._sets = sets or []
+        self._detalles = detalles or {}
         self.get_card_calls = 0
         self.find_calls = 0
         self.list_set_cards_calls = 0
+        self.list_sets_calls = 0
+        self.get_set_detail_calls = 0
 
     async def get_card(self, card_id: str):
         self.get_card_calls += 1
@@ -36,6 +46,14 @@ class FakeCatalog:
     async def list_set_cards(self, set_id: str):
         self.list_set_cards_calls += 1
         return self._set_cards.get(set_id, [])
+
+    async def list_sets(self):
+        self.list_sets_calls += 1
+        return self._sets
+
+    async def get_set_detail(self, set_id: str):
+        self.get_set_detail_calls += 1
+        return self._detalles.get(set_id)
 
 
 @pytest.fixture()
@@ -127,3 +145,100 @@ async def test_list_set_cards_de_sets_distintos_no_comparte_cache(conn_factory):
     await service.list_set_cards("base2")
 
     assert fake.list_set_cards_calls == 2
+
+
+# --- set_por_codigo / sets_por_total (catálogo sabe buscar por código y tamaño) ---
+
+SET_ASCENDED = SetRef(id="me02.5", name="Ascended Heroes", total=217, abbreviation="ASC")
+SET_BASE = SetRef(id="base1", name="Base Set", total=102)
+SET_JUNGLE = SetRef(id="jungle", name="Jungle", total=102)
+
+
+def _fake_con_sets(sets: list[SetRef], detalles: dict[str, SetRef]) -> FakeCatalog:
+    return FakeCatalog({}, sets=sets, detalles=detalles)
+
+
+async def test_set_por_codigo_encuentra_el_set(conn_factory):
+    fake = _fake_con_sets([SET_ASCENDED], {"me02.5": SET_ASCENDED})
+    service = CatalogService(fake, conn_factory)
+
+    encontrado = await service.set_por_codigo("ASC")
+
+    assert encontrado is not None
+    assert encontrado.id == "me02.5"
+
+
+async def test_set_por_codigo_no_distingue_mayusculas(conn_factory):
+    fake = _fake_con_sets([SET_ASCENDED], {"me02.5": SET_ASCENDED})
+    service = CatalogService(fake, conn_factory)
+
+    assert (await service.set_por_codigo("asc")).id == "me02.5"
+
+
+async def test_set_por_codigo_inexistente_devuelve_none(conn_factory):
+    fake = _fake_con_sets([SET_ASCENDED], {"me02.5": SET_ASCENDED})
+    service = CatalogService(fake, conn_factory)
+
+    assert await service.set_por_codigo("ZZZ") is None
+
+
+async def test_sets_por_total_devuelve_exactamente_uno(conn_factory):
+    fake = _fake_con_sets([SET_ASCENDED, SET_BASE], {})
+    service = CatalogService(fake, conn_factory)
+
+    resultado = await service.sets_por_total(217)
+
+    assert [s.id for s in resultado] == ["me02.5"]
+
+
+async def test_sets_por_total_devuelve_varios_cuando_el_tamano_se_repite(conn_factory):
+    fake = _fake_con_sets([SET_BASE, SET_JUNGLE], {})
+    service = CatalogService(fake, conn_factory)
+
+    resultado = await service.sets_por_total(102)
+
+    assert {s.id for s in resultado} == {"base1", "jungle"}
+
+
+async def test_set_por_codigo_pide_la_lista_una_sola_vez_aunque_se_consulten_varios_codigos(
+    conn_factory,
+):
+    fake = _fake_con_sets(
+        [SET_ASCENDED, SET_BASE], {"me02.5": SET_ASCENDED, "base1": SET_BASE.model_copy()}
+    )
+    service = CatalogService(fake, conn_factory)
+
+    await service.set_por_codigo("ASC")
+    await service.set_por_codigo("ZZZ")
+    await service.sets_por_total(102)
+
+    assert fake.list_sets_calls == 1, "la lista de 218 sets se pidió más de una vez"
+
+
+async def test_set_por_codigo_no_reintenta_un_set_ya_resuelto_con_exito(conn_factory):
+    """Una vez que el detalle de un set se trajo con éxito (tenga o no
+    abreviatura), no vuelve a pedirse: solo los que fallaron de verdad (una
+    excepción, no un `None` limpio) quedan pendientes para el próximo
+    llamado."""
+
+    class FakeConFalla(FakeCatalog):
+        def __init__(self):
+            super().__init__({}, sets=[SET_ASCENDED], detalles={"me02.5": SET_ASCENDED})
+            self.fallar_una_vez = True
+
+        async def get_set_detail(self, set_id: str):
+            self.get_set_detail_calls += 1
+            if self.fallar_una_vez:
+                self.fallar_una_vez = False
+                raise TimeoutError("502 simulado")
+            return self._detalles.get(set_id)
+
+    fake = FakeConFalla()
+    service = CatalogService(fake, conn_factory)
+
+    primero = await service.set_por_codigo("ASC")
+    assert primero is None, "la primera vuelta falló, así que todavía no hay índice"
+
+    segundo = await service.set_por_codigo("ASC")
+    assert segundo is not None and segundo.id == "me02.5"
+    assert fake.get_set_detail_calls == 2, "un intento por la falla, uno por el reintento"

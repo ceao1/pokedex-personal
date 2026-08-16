@@ -45,8 +45,15 @@ class CardRef(BaseModel):
 
 
 class SetRef(BaseModel):
-    """Referencia liviana a un set, tal como la devuelve `GET /sets`."""
+    """Referencia liviana a un set, tal como la devuelve `GET /sets`.
+
+    `abbreviation` no viene en ese listado -- solo en el detalle de cada set
+    (`GET /sets/{id}`, bajo `abbreviation.official`) -- así que nace `None`
+    en la mayoría de las instancias y solo se completa cuando alguien pasó
+    por `TcgdexCatalog.get_set_detail` (ver `CatalogService.set_por_codigo`).
+    """
 
     id: str
     name: str
     total: int | None = None
+    abbreviation: str | None = None

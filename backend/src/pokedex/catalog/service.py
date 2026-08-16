@@ -6,6 +6,7 @@ spec llama espejo perezoso (D7): el cache ES el espejo, así que no hace falta
 self-hostear el catálogo completo.
 """
 
+import asyncio
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 
@@ -17,6 +18,13 @@ from .ports import CatalogPort
 
 # `pool.connection` cumple esta firma tal cual.
 ConnFactory = Callable[[], AbstractContextManager[Connection]]
+
+# Cuántos `GET /sets/{id}` concurrentes como máximo mientras se construye el
+# índice de abreviaturas (218 sets en total). Sin límite, 218 llamadas
+# simultáneas es hostil con una API pública y gratuita que ya mostró un 502
+# aislado durante el desarrollo de esta función; con límite, el build tarda
+# unos segundos en vez de tumbar la petición completa por una falla ajena.
+_CONCURRENCIA_INDICE_ABREVIATURAS = 15
 
 
 class CatalogService:
@@ -33,6 +41,21 @@ class CatalogService:
         # instancia; sin este cache, cada identificación por foto repetiría
         # la llamada completa a `GET /sets` (ver `recognition.resolver`).
         self._sets_cache: list[SetRef] | None = None
+        # Índice código de set (en minúsculas) -> SetRef, para
+        # `set_por_codigo`. Se construye una sola vez, bajo demanda (la
+        # primera vez que se pregunta por un código) y no al arrancar: la
+        # abreviatura solo vive en el detalle de cada set (`GET
+        # /sets/{id}`), así que completarlo cuesta 218 llamadas -- un costo
+        # que un proceso que nunca identifica por foto (ej. el worker de
+        # import del Excel) no debería pagar. `_abbreviation_pendientes`
+        # (None = todavía no se intentó nada; lista vacía = índice
+        # completo) separa "sin construir" de "construido sin huecos", y
+        # sobrevive por separado del índice mismo para reintentar solo los
+        # sets cuyo detalle falló la última vez (ver
+        # `_actualizar_indice_abreviaturas`) en vez de repetir las 218
+        # llamadas por un 502 aislado.
+        self._abbreviation_index: dict[str, SetRef] = {}
+        self._abbreviation_pendientes: list[SetRef] | None = None
 
     async def get_card(self, card_id: str) -> Card | None:
         with self._conn_factory() as conn:
@@ -71,3 +94,46 @@ class CatalogService:
         with self._conn_factory() as conn:
             repository.upsert_card(conn, remote)
         return remote
+
+    async def set_por_codigo(self, codigo: str) -> SetRef | None:
+        """El código impreso junto al número en la carta (`ASC`, `BS`,
+        `JU`), sin distinguir mayúsculas. Es único entre los 218 sets
+        (verificado contra la API real): la señal más fuerte para resolver
+        el set (spec de la task, ver `recognition/resolver.py`)."""
+        await self._actualizar_indice_abreviaturas()
+        return self._abbreviation_index.get(codigo.strip().casefold())
+
+    async def sets_por_total(self, total: int) -> list[SetRef]:
+        """Sets cuyo `cardCount.official` es `total`. No es único -- hay
+        tamaños repetidos entre los 218 sets -- así que puede devolver
+        varios; el respaldo cuando no hay código de set."""
+        return [s for s in await self.list_sets() if s.total == total]
+
+    async def _actualizar_indice_abreviaturas(self) -> None:
+        if self._abbreviation_pendientes is None:
+            self._abbreviation_pendientes = list(await self.list_sets())
+        if not self._abbreviation_pendientes:
+            return
+
+        semaforo = asyncio.Semaphore(_CONCURRENCIA_INDICE_ABREVIATURAS)
+
+        async def _con_limite(set_ref: SetRef) -> SetRef | None:
+            async with semaforo:
+                return await self._catalog.get_set_detail(set_ref.id)
+
+        resultados = await asyncio.gather(
+            *(_con_limite(s) for s in self._abbreviation_pendientes),
+            return_exceptions=True,
+        )
+
+        # Los que fallaron (ej. un 502 aislado) quedan pendientes para el
+        # próximo llamado -- cachearlos como "sin abreviatura" podría
+        # perder un código real para siempre por una falla pasajera de red.
+        aun_pendientes = []
+        for set_ref, resultado in zip(self._abbreviation_pendientes, resultados, strict=True):
+            if isinstance(resultado, BaseException):
+                aun_pendientes.append(set_ref)
+                continue
+            if resultado is not None and resultado.abbreviation:
+                self._abbreviation_index[resultado.abbreviation.strip().casefold()] = resultado
+        self._abbreviation_pendientes = aun_pendientes
