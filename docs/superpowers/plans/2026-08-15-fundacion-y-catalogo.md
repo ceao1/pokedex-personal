@@ -342,10 +342,10 @@ def supabase_api_url(supabase_env: dict[str, str]) -> str:
 
 @pytest.fixture(scope="session")
 def supabase_publishable_key(supabase_env: dict[str, str]) -> str:
-    return supabase_env["ANON_KEY"]
+    return supabase_env["PUBLISHABLE_KEY"]
 ```
 
-Nota: el stack local sigue emitiendo la llave con el nombre legacy `ANON_KEY`. Es la llave publicable; el nombre nuevo aplica al proyecto hosteado. El código de producción usa `sb_publishable_...`.
+El stack local emite las cuatro llaves: `PUBLISHABLE_KEY` (`sb_publishable_...`) y `SECRET_KEY` (`sb_secret_...`) junto a las legacy `ANON_KEY` y `SERVICE_ROLE_KEY`. Se usa la publicable, coherente con la restricción global sobre nombres de llaves.
 
 - [ ] **Step 5: Escribir el test de exposición (que va a fallar)**
 
