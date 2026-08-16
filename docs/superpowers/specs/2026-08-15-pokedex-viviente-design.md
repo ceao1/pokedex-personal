@@ -54,7 +54,30 @@ Consultado el 2026-08-15 contra `api.tcgdex.net/v2/en`.
 | holo | shadowless | — | `null` |
 | holo | 1999-2000-copyright | — | ausente |
 
-Cada entrada tiene un `variantId` propio. Consecuencia: el modelo de datos guarda el precio en la variante, y las variantes vintage caras no tienen precio disponible.
+Cada entrada tiene un `variantId` propio. Las variantes vintage caras (shadowless, 1st Ed) no tienen precio disponible.
+
+**El bloque `pricing` NO está scopeado a la variante.** Verificado con `sv03.5-001` (Bulbasaur del set 151): el mismo objeto `pricing.tcgplayer` aparece idéntico en la entrada `normal` y en la `reverse`, y contiene sub-claves por tipo de acabado:
+
+```json
+"tcgplayer": {
+  "unit": "USD",
+  "updated": "...",
+  "reverse-holofoil": { "marketPrice": 0.38, ... },
+  "normal":            { "marketPrice": 0.25, ... }
+}
+```
+
+Leer `pricing.tcgplayer.marketPrice` directamente no funciona: **hay que elegir la sub-clave según el tipo de la variante**, ignorando las claves de metadatos `unit` y `updated`.
+
+| `type` de la variante | Sub-clave de `tcgplayer` |
+|---|---|
+| `normal` | `normal` |
+| `reverse` | `reverse-holofoil` |
+| `holo` | `holofoil` |
+
+**Hay entradas duplicadas por tipo**, distinguidas por campos que el PRD no contemplaba: `stamp` (Bulbasaur tiene una entrada `normal` con `stamp: ["set-logo"]` que vale 70 € contra 0.25 de la normal) y `foil` (`cosmos`). Además existe `size`, siempre `standard` en las cartas vistas. La desambiguación se especifica en [§6.2](#62-mapeo-de-chip-a-variante).
+
+`tcgplayer` puede ser `null` mientras `cardmarket` tiene datos — es el caso de esa variante con sello. Por D1 (moneda única USD) no se usa Cardmarket como respaldo, así que esa variante simplemente no tiene precio.
 
 **El dataset open source no trae precios.** Los archivos de `tcgdex/cards-database` (por ejemplo `data/Base/Base Set/4.ts`) contienen nombre, ilustrador, rareza, ataques y habilidades — ningún campo de precio. El pricing lo agrega el servicio hosteado. Esto invalida el argumento del PRD §6.1 de que self-hostear da control total: el precio seguiría viniendo de fuera.
 
@@ -143,8 +166,10 @@ Todas las tablas viven en el esquema `app` (D13), con RLS habilitada y sin polí
 | `card_id` | text FK | |
 | `type` | text | `holo`, `normal`, `reverse`, `firstEdition`, `wPromo` |
 | `subtype` | text null | `unlimited`, `shadowless`, `1999-2000-copyright` |
-| `stamp` | text[] | ej. `{1st-edition}` |
-| `price_usd` | numeric null | `tcgplayer.marketPrice` congelado |
+| `stamp` | text[] | ej. `{1st-edition}`, `{set-logo}` |
+| `foil` | text null | ej. `cosmos` |
+| `size` | text | `standard` en todo lo visto |
+| `price_usd` | numeric null | `marketPrice` de la sub-clave de `tcgplayer` que corresponde al `type` (ver §3) |
 | `price_captured_at` | timestamptz null | |
 | `raw` | jsonb | |
 
@@ -260,18 +285,26 @@ El chip da un `variant_label`. Con `card_id` + `variant_label` se busca la fila 
 
 Los chips se muestran en dos grupos que **no se solapan**, según el set de la carta reconocida: los tres modernos siempre, los tres vintage solo para sets WOTC (1999-2003).
 
-| Grupo | Chip | Criterio de búsqueda |
+La resolución tiene dos pasos, porque una carta puede tener varias entradas del mismo `type` (ver [§3](#3-hallazgos-verificados-sobre-tcgdex)).
+
+**Paso 1 — elegir la fila de `card_variant`:**
+
+| Grupo | Chip | Criterio |
 |---|---|---|
 | Moderno | Normal | `type = normal` |
 | Moderno | Reverse | `type = reverse` |
 | Moderno | Holo | `type = holo` y `subtype` nulo |
 | Vintage | 1st Edition | `stamp` contiene `1st-edition` |
-| Vintage | Shadowless | `subtype = shadowless` y `stamp` vacío |
+| Vintage | Shadowless | `subtype = shadowless` y `stamp` no contiene `1st-edition` |
 | Vintage | Unlimited | `subtype = unlimited` |
 
-Mientras la carta no está identificada (captura asíncrona) se muestran ambos grupos; al resolverse, el grupo que no corresponde se oculta y, si el chip elegido quedó fuera, el ejemplar pasa a `en_revision`.
+**Paso 2 — desambiguar si quedó más de una fila.** Se prefiere, en este orden, la entrada **sin `stamp`**, **sin `foil`** y con `size = standard`. Esta regla es la que evita el error caro: Bulbasaur `sv03.5-001` tiene dos entradas `normal` y la que lleva `stamp: ["set-logo"]` cuesta 280 veces más que la común. Si tras desambiguar sigue habiendo empate, se toma la primera y el ejemplar pasa a `en_revision` para que lo confirmes.
 
-Si hay cero o múltiples coincidencias, `card_variant_id` queda null y el ejemplar no tiene precio de mercado. Es un estado válido, no un error.
+**Paso 3 — extraer el precio** de la sub-clave de `tcgplayer` que corresponde al `type`, según la tabla de §3. Si esa sub-clave no existe o `tcgplayer` es `null`, la variante queda sin precio.
+
+Los chips se muestran en dos grupos que **no se solapan**: los tres modernos siempre, los tres vintage solo para sets WOTC (1999-2003). Mientras la carta no está identificada (captura asíncrona) se muestran ambos grupos; al resolverse, el grupo que no corresponde se oculta y, si el chip elegido quedó fuera, el ejemplar pasa a `en_revision`.
+
+Si no hay ninguna coincidencia, `card_variant_id` queda null y el ejemplar no tiene precio de mercado. Es un estado válido, no un error.
 
 ### 6.3 Offline
 
