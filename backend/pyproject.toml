@@ -31,6 +31,20 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = ["contract: pega a la API real de TCGdex; excluido por defecto"]
 addopts = "-m 'not contract'"
+# macOS a veces marca los .pth del editable install con el flag UF_HIDDEN,
+# lo que hace que site.addpackage los ignore y rompe `import pokedex`.
+# `pythonpath` es una opción nativa de pytest que inserta "src" en sys.path
+# directamente, sin pasar por el mecanismo de .pth. No borrar pensando que
+# es redundante con el editable install: sin esto, la suite falla de forma
+# intermitente según el estado de ese flag.
+pythonpath = ["src"]
+filterwarnings = [
+    # Aviso de deprecación de terceros (starlette.testclient re: httpx vs
+    # httpx2) emitido al importar TestClient con las versiones fijadas en
+    # este proyecto. No es código propio; se ignora de forma acotada por
+    # mensaje y categoría, no con un ignore genérico.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100
