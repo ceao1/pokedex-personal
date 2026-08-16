@@ -1,9 +1,12 @@
 from datetime import datetime
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from pokedex.api.main import app
+from pokedex.api.routes.pokedex import get_storage
+from pokedex.collection.storage import FakeStorage
 from pokedex.wishlist import repository
 from pokedex.wishlist.models import WishlistItemIn
 
@@ -141,3 +144,98 @@ def test_get_wishlist_trae_la_fecha_del_precio(sembrado):
     fecha = body[0]["price_captured_at"]
     assert fecha is not None
     datetime.fromisoformat(fecha)
+
+
+@pytest.fixture()
+def fake_storage() -> FakeStorage:
+    return FakeStorage()
+
+
+@pytest.fixture()
+def client_con_ejemplares(sembrado, fake_storage):
+    """El bucket es privado (decisión de diseño): la suite no puede pegarle a
+    Supabase Storage real, así que `get_storage` se sustituye por un fake,
+    igual que `test_capture_routes.py` hace con `get_service`."""
+    app.dependency_overrides[get_storage] = lambda: fake_storage
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+def test_get_pokedex_de_un_dex_devuelve_tus_ejemplares_con_foto_firmada(
+    client_con_ejemplares, sembrado, fake_storage
+):
+    """`GET /pokedex/4` con dos ejemplares devuelve `copies` con dos
+    entradas, cada una con su `photo_url` firmada cuando tiene foto y `null`
+    cuando no."""
+    sembrado.execute(
+        """
+        insert into app.pokemon (dex_number, name) values (4, 'Charmander')
+        on conflict do nothing
+        """
+    )
+    sembrado.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, image_url, raw)
+        values ('sv03.5-004', 'Charmander', 'sv03.5', '151', '004', 4,
+                'https://x/004/high.png', '{}'::jsonb)
+        """
+    )
+    con_foto = uuid4()
+    sin_foto = uuid4()
+    sembrado.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, photo_front_url, notes)
+        values (%s, 'sv03.5-004', %s, 'con foto')
+        """,
+        (con_foto, f"{con_foto}/front.jpg"),
+    )
+    sembrado.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, notes)
+        values (%s, 'sv03.5-004', 'sin foto')
+        """,
+        (sin_foto,),
+    )
+    sembrado.commit()
+
+    response = client_con_ejemplares.get("/pokedex/4")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["copies"]) == 2
+    por_nota = {c["notes"]: c for c in body["copies"]}
+    assert por_nota["con foto"]["photo_url"] is not None
+    assert por_nota["con foto"]["photo_url"].startswith("https://fake.storage.test/download/")
+    assert por_nota["sin foto"]["photo_url"] is None
+    # Firmado en lote: una sola llamada a la red por la ficha completa, no
+    # una por ejemplar dentro de un bucle sin control.
+    assert fake_storage.batch_calls == [[f"{con_foto}/front.jpg"]]
+
+
+def test_un_error_al_firmar_no_revienta_la_ficha(client_con_ejemplares, sembrado, fake_storage):
+    """La foto es decoración de esta pantalla, los datos no: si firmar falla,
+    el ejemplar se devuelve con `photo_url: null` en vez de un 500."""
+    sembrado.execute(
+        "insert into app.pokemon (dex_number, name) values (4, 'Charmander') on conflict do nothing"
+    )
+    sembrado.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, image_url, raw)
+        values ('sv03.5-004', 'Charmander', 'sv03.5', '151', '004', 4,
+                'https://x/004/high.png', '{}'::jsonb)
+        """
+    )
+    draft = uuid4()
+    sembrado.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, photo_front_url)
+        values (%s, 'sv03.5-004', %s)
+        """,
+        (draft, f"{draft}/front.jpg"),
+    )
+    sembrado.commit()
+    fake_storage.fallar_firma_de.add(f"{draft}/front.jpg")
+
+    response = client_con_ejemplares.get("/pokedex/4")
+    assert response.status_code == 200
+    assert response.json()["copies"][0]["photo_url"] is None

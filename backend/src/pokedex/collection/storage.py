@@ -40,6 +40,10 @@ class StoragePort(Protocol):
 
     async def signed_download_url(self, path: str, seconds: int = 3600) -> str: ...
 
+    async def signed_download_urls(
+        self, paths: list[str], seconds: int = 3600
+    ) -> dict[str, str | None]: ...
+
 
 class SupabaseStorage:
     def __init__(
@@ -89,6 +93,34 @@ class SupabaseStorage:
         response.raise_for_status()
         return f"{self._public_base}/{response.json()['signedURL'].lstrip('/')}"
 
+    async def signed_download_urls(
+        self, paths: list[str], seconds: int = 3600
+    ) -> dict[str, str | None]:
+        """Firma varias descargas en una sola petición (el endpoint bulk de
+        Storage), no una por ejemplar dentro de un bucle sin control -- una
+        ficha con varios ejemplares no debe convertirse en N llamadas a red.
+
+        Cada entrada de la respuesta puede traer su propio error (un objeto
+        que ya no está en el bucket, por ejemplo) sin que eso tumbe a las
+        demás: ese path queda en `None` y el resto sigue firmado.
+        """
+        if not paths:
+            return {}
+        response = await self._client.post(
+            f"{self._base}/object/sign/{self._bucket}",
+            headers=self._headers,
+            json={"expiresIn": seconds, "paths": paths},
+        )
+        response.raise_for_status()
+        firmadas: dict[str, str | None] = {}
+        for entrada in response.json():
+            path = entrada.get("path")
+            if path is None:
+                continue
+            url = entrada.get("signedURL")
+            firmadas[path] = f"{self._public_base}/{url.lstrip('/')}" if url else None
+        return firmadas
+
 
 class FakeStorage:
     """Doble de `StoragePort` para tests: no pega a la red.
@@ -108,6 +140,11 @@ class FakeStorage:
         self.signed_uploads: list[str] = []
         self.signed_downloads: list[str] = []
         self.already_uploaded: set[str] = set()
+        # Un test marca acá los paths que la firma en lote debe hacer fallar
+        # (simula un objeto que ya no está en el bucket), sin tumbar el resto
+        # del lote -- ver `signed_download_urls`.
+        self.fallar_firma_de: set[str] = set()
+        self.batch_calls: list[list[str]] = []
 
     async def create_signed_upload(self, path: str) -> SignedUpload:
         if path in self.already_uploaded:
@@ -122,3 +159,17 @@ class FakeStorage:
     async def signed_download_url(self, path: str, seconds: int = 3600) -> str:
         self.signed_downloads.append(path)
         return f"https://fake.storage.test/download/{path}?expires={seconds}"
+
+    async def signed_download_urls(
+        self, paths: list[str], seconds: int = 3600
+    ) -> dict[str, str | None]:
+        self.batch_calls.append(list(paths))
+        self.signed_downloads.extend(paths)
+        return {
+            path: (
+                None
+                if path in self.fallar_firma_de
+                else f"https://fake.storage.test/download/{path}?expires={seconds}"
+            )
+            for path in paths
+        }
