@@ -114,11 +114,18 @@
   }
 
   /* El único <h1> de la página no puede desaparecer en móvil: se
-     encoge a una sola línea en vez de ocultarse. */
+     encoge a una sola línea en vez de ocultarse. min-inline-size: 0
+     rompe el mínimo automático de flexbox (un ítem nowrap no se
+     encoge bajo su ancho de contenido por defecto), así que un
+     fallback de fuente más ancho o un viewport más angosto degradan
+     a elipsis en vez de desbordar la página. */
   .title {
     font-size: var(--step--1);
     line-height: 1.1;
     white-space: nowrap;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .titleBreak {

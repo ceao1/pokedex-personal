@@ -89,9 +89,11 @@
   font-family: var(--font-data), monospace;
   font-size: var(--step--1);
   /* --shell (el rojo de carcasa) va solo en superficies grandes o
-     texto >= 18px; a 12px se distingue del nombre por peso, no por matiz. */
-  color: var(--stock);
-  font-weight: 600;
+     texto >= 18px; a 12px se distingue del nombre por peso, no por matiz.
+     Es dato secundario frente al nombre: --stock-dim y peso normal lo
+     dejan claramente detrás en la jerarquía. */
+  color: var(--stock-dim);
+  font-weight: 400;
 }
 
 .sheen {
