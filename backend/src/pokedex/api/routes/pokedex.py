@@ -91,6 +91,9 @@ class OtraCartaOut(BaseModel):
     set_name: str | None
     local_id: str | None
     dex_number: int | None
+    # Arte del catálogo: la pantalla lo usa cuando el ejemplar no tiene foto
+    # propia (spec: "el arte del catálogo" como respaldo).
+    image_url: str | None
     variant_label: str | None
     condition: str | None
     purchase_price_usd: float | None

@@ -217,8 +217,9 @@ def test_get_otras_cartas_devuelve_ejemplares_fuera_del_151_con_foto_firmada(
 ):
     sembrado.execute(
         """
-        insert into app.card (id, name, set_id, set_name, local_id, dex_number, raw)
-        values ('me02.5-008', 'Chikorita', 'me02.5', 'Ascended Heroes', '008', 152, '{}'::jsonb)
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, image_url, raw)
+        values ('me02.5-008', 'Chikorita', 'me02.5', 'Ascended Heroes', '008', 152,
+                'https://x/008/high.png', '{}'::jsonb)
         """
     )
     con_foto = uuid4()
@@ -237,6 +238,7 @@ def test_get_otras_cartas_devuelve_ejemplares_fuera_del_151_con_foto_firmada(
     assert len(body) == 1
     assert body[0]["card_name"] == "Chikorita"
     assert body[0]["dex_number"] == 152
+    assert body[0]["image_url"] == "https://x/008/high.png"
     assert body[0]["photo_url"] is not None
     assert body[0]["photo_url"].startswith("https://fake.storage.test/download/")
 

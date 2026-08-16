@@ -150,7 +150,7 @@ def listar_por_dex(conn: Connection, dex_number: int) -> list[dict]:
 # del proyecto y tiene que aparecer, y un `join` liso lo excluiría.
 _LISTAR_FUERA_DEL_151 = """
 select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id, c.dex_number,
-       o.variant_label, o.condition, o.purchase_price_usd,
+       c.image_url, o.variant_label, o.condition, o.purchase_price_usd,
        o.photo_front_url, o.photo_thumb_url, o.notes, o.created_at
 from app.owned_copy o
 left join app.card c on c.id = o.card_id

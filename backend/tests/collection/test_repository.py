@@ -173,11 +173,11 @@ def _sembrar_carta_de_otra_generacion(conn, card_id="me02.5-008", nombre="Chikor
     """Una carta real fuera del proyecto de los 151: Chikorita es dex 152."""
     conn.execute(
         """
-        insert into app.card (id, name, set_id, set_name, local_id, dex_number, raw)
-        values (%s, %s, 'me02.5', 'Ascended Heroes', '008', %s, '{}'::jsonb)
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, image_url, raw)
+        values (%s, %s, 'me02.5', 'Ascended Heroes', '008', %s, %s, '{}'::jsonb)
         on conflict do nothing
         """,
-        (card_id, nombre, dex),
+        (card_id, nombre, dex, f"https://x/{card_id}/high.png"),
     )
 
 
@@ -265,6 +265,7 @@ def test_listar_fuera_del_151_trae_lo_necesario_para_dibujarla(clean_db):
         "set_name",
         "local_id",
         "dex_number",
+        "image_url",
         "variant_label",
         "purchase_price_usd",
         "photo_front_url",
@@ -273,6 +274,18 @@ def test_listar_fuera_del_151_trae_lo_necesario_para_dibujarla(clean_db):
         assert campo in ejemplar, f"falta {campo}"
     assert ejemplar["card_name"] == "Chikorita"
     assert ejemplar["dex_number"] == 152
+    assert ejemplar["image_url"] == "https://x/me02.5-008/high.png"
+
+
+def test_listar_fuera_del_151_sin_carta_no_trae_arte_del_catalogo(clean_db):
+    """Un ejemplar sin `card_id` no tiene de dónde sacar el arte del
+    catálogo: `image_url` viaja null, y la pantalla no tiene otra cosa que
+    mostrar que la foto propia (si la hay)."""
+    from uuid import uuid4
+
+    clean_db.execute("insert into app.owned_copy (client_draft_id) values (%s)", (uuid4(),))
+    ejemplar = repository.listar_fuera_del_151(clean_db)[0]
+    assert ejemplar["image_url"] is None
 
 
 def test_la_suma_de_las_dos_vistas_es_el_total_de_ejemplares(clean_db):
