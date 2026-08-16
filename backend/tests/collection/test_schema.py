@@ -84,6 +84,59 @@ def test_no_se_puede_asignar_una_variante_de_otra_carta(clean_db):
         )
 
 
+def test_variant_id_sin_card_id_se_rechaza(clean_db):
+    """La FK compuesta usa MATCH SIMPLE (el default de Postgres): se salta la
+    validación por completo si cualquiera de las dos columnas es null.
+    card_id es null en todo borrador que aún no identificó su carta -- el
+    estado normal de un ejemplar en captura -- así que sin este check un
+    variant_id suelto pasaba sin que la base lo rechazara."""
+    with pytest.raises(psycopg.errors.CheckViolation):
+        clean_db.execute(
+            """
+            insert into app.owned_copy (client_draft_id, variant_id)
+            values ('66666666-6666-6666-6666-666666666666', 'inventado-no-existe')
+            """
+        )
+
+
+def test_card_id_sin_variant_id_se_acepta(clean_db):
+    """El check no debe bloquear este caso: el dueño identificó la carta
+    pero todavía no eligió el print/variante -- estado legítimo, y del que
+    depende `owned_count` (ver tests/wishlist/test_repository.py), que
+    cuenta ejemplares por `card_id` sin exigir `variant_id`."""
+    _sembrar_carta_con_variante(clean_db, "sv03.5-004", "v-d")
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id)
+        values ('88888888-8888-8888-8888-888888888888', 'sv03.5-004')
+        """
+    )
+    fila = clean_db.execute(
+        "select variant_id from app.owned_copy where card_id = 'sv03.5-004'"
+    ).fetchone()
+    assert fila["variant_id"] is None
+
+
+def test_variante_completa_se_acepta(clean_db):
+    """El check no estorba el caso normal: card_id y variant_id juntos, de
+    una variante que sí existe para esa carta."""
+    _sembrar_carta_con_variante(clean_db, "sv03.5-003", "v-c")
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, variant_id)
+        values ('77777777-7777-7777-7777-777777777777', 'sv03.5-003', 'v-c')
+        """
+    )
+    fila = clean_db.execute(
+        """
+        select card_id, variant_id from app.owned_copy
+        where client_draft_id = '77777777-7777-7777-7777-777777777777'
+        """
+    ).fetchone()
+    assert fila["card_id"] == "sv03.5-003"
+    assert fila["variant_id"] == "v-c"
+
+
 def test_gradeada_sin_empresa_se_rechaza(clean_db):
     with pytest.raises(psycopg.errors.CheckViolation):
         clean_db.execute(
