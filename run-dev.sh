@@ -59,7 +59,11 @@ info "Backend listo: http://127.0.0.1:$BACKEND_PORT"
 # --- Import opcional ---------------------------------------------------------
 if [[ "${1:-}" == "--import" ]]; then
   info "Sembrando el checklist desde el Excel (tarda: espeja cientos de cartas)…"
-  ( cd "$RAIZ/backend" && uv run python -m pokedex.cli import-excel "$EXCEL" )
+  # PYTHONPATH=src y no la instalación editable: macOS marca como ocultos los
+  # .pth de site-packages y Python salta los .pth ocultos. pytest lo sortea con
+  # `pythonpath` y uvicorn con `--app-dir`; `python -m` no tiene escape posible,
+  # porque resuelve el paquete antes de ejecutar una sola línea suya.
+  ( cd "$RAIZ/backend" && PYTHONPATH=src uv run python -m pokedex.cli import-excel "$EXCEL" )
 fi
 
 POKEMON=$(psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -tAc \
