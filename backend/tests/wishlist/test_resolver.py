@@ -97,6 +97,17 @@ async def test_la_opcion_2_con_carta_distinta_resuelve_como_holo():
     assert op2.variant_label == "holo"
 
 
+async def test_la_opcion_2_reverse_no_repite_la_consulta_al_catalogo():
+    """Si la opción 1 ya resolvió, el reverse reusa ese card_id directamente
+    en vez de volver a consultar el catálogo por el mismo número."""
+    fake = FakeCatalog()
+    resolver = OptionResolver(fake)
+    await resolver.resolve_row(
+        _row(11, "Metapod", opcion_1="Metapod 011/165", opcion_2="Reverse holo de 011/165")
+    )
+    assert fake.numero_calls == [("sv03.5", "011")], "no debe repetir la consulta del reverse"
+
+
 async def test_la_opcion_3_resuelve_por_nombre_dentro_del_set_vintage():
     resolver = OptionResolver(FakeCatalog())
     resueltas = await resolver.resolve_row(_row(6, "Charizard", opcion_3="Charizard Base Set Holo"))
@@ -122,6 +133,20 @@ async def test_un_nombre_que_no_esta_en_el_set_queda_sin_resolver():
     assert op3.card_id is None
     assert op3.variant_label is None
     assert op3.raw_text == "Blastoise Base Set"
+
+
+async def test_una_coincidencia_ambigua_en_vintage_queda_sin_resolver():
+    """La regla es 'no adivinar': dos cartas con el mismo nombre en el mismo
+    set no deben resolver a ninguna de las dos."""
+    fake = FakeCatalog()
+    fake.set_cards["base1"] = [
+        CardRef(id="base1-4", local_id="4", name="Ditto"),
+        CardRef(id="base1-9", local_id="9", name="Ditto"),
+    ]
+    resolver = OptionResolver(fake)
+    resueltas = await resolver.resolve_row(_row(132, "Ditto", opcion_3="Ditto Base Set"))
+    op3 = next(o for o in resueltas if o.source_option == "opcion_3")
+    assert op3.card_id is None
 
 
 async def test_un_texto_vintage_desconocido_queda_sin_resolver():

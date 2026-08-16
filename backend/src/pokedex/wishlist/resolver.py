@@ -70,9 +70,7 @@ class OptionResolver:
             resueltas.append(resolved)
         return resueltas
 
-    async def _resolve_numbered(
-        self, option: ExcelOption, variant: VariantLabel
-    ) -> ResolvedOption:
+    async def _resolve_numbered(self, option: ExcelOption, variant: VariantLabel) -> ResolvedOption:
         match = NUMERO_RE.search(option.raw_text)
         base = ResolvedOption(
             source_option=option.source_option,
@@ -102,13 +100,21 @@ class OptionResolver:
         variante `holo`.
         """
         if REVERSE_RE.match(option.raw_text):
-            resolved = await self._resolve_numbered(option, VariantLabel.REVERSE)
-            # El número del texto del reverse es el mismo de la opción 1;
-            # si aquélla resolvió, respetamos su card_id por consistencia.
-            if resolved.card_id is None and card_id_opcion_1 is not None:
-                resolved.card_id = card_id_opcion_1
-                resolved.variant_label = VariantLabel.REVERSE.value
-            return resolved
+            if card_id_opcion_1 is not None:
+                # El número del texto del reverse es el mismo de la opción 1;
+                # si aquélla ya resolvió, reusamos su card_id directamente y
+                # nos ahorramos una consulta redundante al catálogo.
+                return ResolvedOption(
+                    source_option=option.source_option,
+                    raw_text=option.raw_text,
+                    card_id=card_id_opcion_1,
+                    variant_label=VariantLabel.REVERSE.value,
+                    reference_value_usd=option.reference_value_usd,
+                )
+            # La opción 1 no resolvió (número no encontrado en el set 151);
+            # como último recurso, intentamos resolver el reverse por su
+            # propio número.
+            return await self._resolve_numbered(option, VariantLabel.REVERSE)
         return await self._resolve_numbered(option, VariantLabel.HOLO)
 
     async def _resolve_vintage(self, option: ExcelOption, pokemon_name: str) -> ResolvedOption:
