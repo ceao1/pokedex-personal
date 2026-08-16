@@ -6,8 +6,15 @@ import {
   buscarCarta,
   crearCaptura,
   marcarFotoSubida,
+  nuevoClientDraftId,
   subirFoto,
 } from "../lib/api";
+import {
+  eliminarFotoPendiente,
+  guardarFotoPendiente,
+  listarFotosPendientes,
+  type FotoPendiente,
+} from "../lib/fotosPendientes";
 import type { Card, StartCapture, Variant, VariantLabel } from "../lib/types";
 import styles from "./Captura.module.css";
 
@@ -97,13 +104,26 @@ async function redimensionar(archivo: File, ladoMayor: number, calidad = 0.85): 
 
 type EstadoSubida = "sin_foto" | "subiendo" | "lista" | "error";
 
+type FotosRedimensionadas = { front: Blob; thumb: Blob };
+
 export function Captura() {
   const draftRef = useRef<StartCapture | null>(null);
-  const archivoRef = useRef<File | null>(null);
+  const clientDraftIdRef = useRef<string | null>(null);
+  const fotosRef = useRef<FotosRedimensionadas | null>(null);
   const fotoMarcadaRef = useRef(false);
+  // Bytes que ya aterrizaron en el bucket, aunque `marcarFotoSubida` no
+  // haya confirmado todavía -- distinto de `fotoMarcadaRef`, que es la
+  // confirmación del backend. Sin este ref, un fallo de
+  // `marcarFotoSubida` tras una subida exitosa deja los bytes sin fila
+  // que los referencie y sin forma de recuperarlos desde `guardar()`.
+  const bytesSubidosRef = useRef(false);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [estadoFoto, setEstadoFoto] = useState<EstadoSubida>("sin_foto");
+
+  const [pendientes, setPendientes] = useState<FotoPendiente[]>([]);
+  const [reanudando, setReanudando] = useState(false);
+  const [errorReanudar, setErrorReanudar] = useState<string | null>(null);
 
   const [setId, setSetId] = useState("sv03.5");
   const [numero, setNumero] = useState("");
@@ -171,31 +191,66 @@ export function Captura() {
     };
   }, [setId, numero]);
 
+  // Refresca el banner de "fotos pendientes de una sesión anterior": al
+  // montar, y de nuevo cada vez que el borrador actual cambia (guardar,
+  // registrar otra), para no dejar una foto de una carta anterior
+  // escondida sin más que el silencio.
+  async function refrescarPendientes() {
+    try {
+      const todas = await listarFotosPendientes();
+      setPendientes(todas.filter((p) => p.clientDraftId !== clientDraftIdRef.current));
+    } catch {
+      // Best-effort: si IndexedDB falla acá no hay nada más que mostrar,
+      // pero tampoco debe romper la pantalla.
+    }
+  }
+
+  useEffect(() => {
+    void refrescarPendientes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function idBorrador(): string {
+    if (!clientDraftIdRef.current) {
+      clientDraftIdRef.current = nuevoClientDraftId();
+    }
+    return clientDraftIdRef.current;
+  }
+
   async function asegurarBorrador(): Promise<StartCapture> {
     if (draftRef.current) return draftRef.current;
-    const clientDraftId = crypto.randomUUID();
-    const inicio = await crearCaptura(clientDraftId);
+    const inicio = await crearCaptura(idBorrador());
     draftRef.current = inicio;
     return inicio;
   }
 
-  async function subirFotosEnParalelo(archivo: File, uploads: StartCapture["uploads"]) {
+  /** Sube las dos renditions ya redimensionadas y marca la foto en el
+   * backend. Una URL firmada vacía significa "ya subido, no hace falta
+   * volver a mandar la foto" (ver `_firmar_subida_o_ya_existente` en el
+   * backend) -- mandarla igual haría un PUT contra la URL de la propia
+   * página. */
+  async function subirAmbasFotos(
+    clientDraftId: string,
+    uploads: StartCapture["uploads"],
+    front: Blob,
+    thumb: Blob
+  ) {
     setEstadoFoto("subiendo");
     try {
-      const [front, thumb] = await Promise.all([
-        redimensionar(archivo, 2048),
-        redimensionar(archivo, 400),
+      await Promise.all([
+        uploads.front ? subirFoto(uploads.front, front) : Promise.resolve(),
+        uploads.thumb ? subirFoto(uploads.thumb, thumb) : Promise.resolve(),
       ]);
-      await Promise.all([subirFoto(uploads.front, front), subirFoto(uploads.thumb, thumb)]);
-      const draft = draftRef.current;
-      if (draft) {
-        await marcarFotoSubida(draft.client_draft_id);
-        fotoMarcadaRef.current = true;
-      }
+      bytesSubidosRef.current = true;
+      await marcarFotoSubida(clientDraftId);
+      fotoMarcadaRef.current = true;
+      await eliminarFotoPendiente(clientDraftId);
       setEstadoFoto("lista");
     } catch {
-      // Nunca se pierde el registro por un fallo de red: el ejemplar puede
-      // guardarse igual, sin foto, y la pantalla lo deja claro.
+      // Nunca se pierde la foto por un fallo de red: los blobs ya están en
+      // IndexedDB desde antes de este intento, y el ejemplar puede
+      // guardarse igual sin foto confirmada todavía. La pantalla lo deja
+      // claro y ofrece reintentar.
       setEstadoFoto("error");
     }
   }
@@ -203,22 +258,74 @@ export function Captura() {
   async function onFotoElegida(event: React.ChangeEvent<HTMLInputElement>) {
     const archivo = event.target.files?.[0];
     if (!archivo) return;
-    archivoRef.current = archivo;
     setPreviewUrl(URL.createObjectURL(archivo));
     fotoMarcadaRef.current = false;
+    bytesSubidosRef.current = false;
+    setEstadoFoto("subiendo");
     try {
+      const [front, thumb] = await Promise.all([
+        redimensionar(archivo, 2048),
+        redimensionar(archivo, 400),
+      ]);
+      const clientDraftId = idBorrador();
+      // Paso 1 de la spec (§6): los blobs quedan en IndexedDB *antes* de
+      // la primera llamada de red. Si la subida falla, la pestaña se
+      // recarga o iOS mata la PWA en segundo plano, la foto sigue en el
+      // dispositivo.
+      await guardarFotoPendiente(clientDraftId, front, thumb);
+      fotosRef.current = { front, thumb };
       const inicio = await asegurarBorrador();
-      void subirFotosEnParalelo(archivo, inicio.uploads);
+      await subirAmbasFotos(clientDraftId, inicio.uploads, front, thumb);
     } catch {
       setEstadoFoto("error");
     }
   }
 
-  function reintentarFoto() {
-    const draft = draftRef.current;
-    const archivo = archivoRef.current;
-    if (draft && archivo) {
-      void subirFotosEnParalelo(archivo, draft.uploads);
+  async function reintentarFoto() {
+    const clientDraftId = clientDraftIdRef.current;
+    const fotos = fotosRef.current;
+    if (!clientDraftId || !fotos) return;
+    setEstadoFoto("subiendo");
+    try {
+      // Las URLs firmadas son de un solo uso: si algún byte ya llegó al
+      // bucket, reintentar el mismo PUT devuelve 409 Duplicate. Pedir
+      // firmas nuevas es seguro porque `POST /captures` es idempotente
+      // por `client_draft_id`.
+      const inicio = await crearCaptura(clientDraftId);
+      draftRef.current = inicio;
+      await subirAmbasFotos(clientDraftId, inicio.uploads, fotos.front, fotos.thumb);
+    } catch {
+      setEstadoFoto("error");
+    }
+  }
+
+  async function reanudarPendientes() {
+    setReanudando(true);
+    setErrorReanudar(null);
+    const restantes: FotoPendiente[] = [];
+    for (const pendiente of pendientes) {
+      try {
+        const inicio = await crearCaptura(pendiente.clientDraftId);
+        await Promise.all([
+          inicio.uploads.front
+            ? subirFoto(inicio.uploads.front, pendiente.front)
+            : Promise.resolve(),
+          inicio.uploads.thumb
+            ? subirFoto(inicio.uploads.thumb, pendiente.thumb)
+            : Promise.resolve(),
+        ]);
+        await marcarFotoSubida(pendiente.clientDraftId);
+        await eliminarFotoPendiente(pendiente.clientDraftId);
+      } catch {
+        restantes.push(pendiente);
+      }
+    }
+    setPendientes(restantes);
+    setReanudando(false);
+    if (restantes.length > 0) {
+      setErrorReanudar(
+        `No se pudieron subir ${restantes.length} ${restantes.length === 1 ? "foto" : "fotos"}. Revisa tu conexión e inténtalo de nuevo.`
+      );
     }
   }
 
@@ -232,9 +339,21 @@ export function Captura() {
     setErrorGuardado(null);
     try {
       const draft = await asegurarBorrador();
-      if (estadoFoto === "lista" && !fotoMarcadaRef.current) {
-        await marcarFotoSubida(draft.client_draft_id);
-        fotoMarcadaRef.current = true;
+      // No depende de `estadoFoto === "lista"`: si las dos renditions ya
+      // llegaron al bucket pero `marcarFotoSubida` falló después (ver
+      // finding), los bytes existen igual y hay que intentar marcarlos
+      // acá también, o quedan huérfanos para siempre.
+      if (bytesSubidosRef.current && !fotoMarcadaRef.current) {
+        try {
+          await marcarFotoSubida(draft.client_draft_id);
+          fotoMarcadaRef.current = true;
+          await eliminarFotoPendiente(draft.client_draft_id);
+          setEstadoFoto("lista");
+        } catch {
+          // Los bytes ya están en el bucket; si marcar vuelve a fallar el
+          // ejemplar se guarda igual y la foto queda en el banner de
+          // pendientes para reintentar más tarde.
+        }
       }
       await actualizarCaptura(draft.client_draft_id, {
         card_id: carta?.id ?? null,
@@ -244,6 +363,7 @@ export function Captura() {
         capture_status: "listo",
       });
       setGuardado(true);
+      void refrescarPendientes();
     } catch {
       setErrorGuardado("No se pudo guardar el ejemplar. Revisa tu conexión e intenta de nuevo.");
     } finally {
@@ -253,8 +373,10 @@ export function Captura() {
 
   function registrarOtra() {
     draftRef.current = null;
-    archivoRef.current = null;
+    clientDraftIdRef.current = null;
+    fotosRef.current = null;
     fotoMarcadaRef.current = false;
+    bytesSubidosRef.current = false;
     setPreviewUrl(null);
     setEstadoFoto("sin_foto");
     setNumero("");
@@ -265,6 +387,7 @@ export function Captura() {
     setPrecio("");
     setGuardado(false);
     setErrorGuardado(null);
+    void refrescarPendientes();
   }
 
   const esSetWotc = carta !== null && SETS_WOTC.has(carta.set_id);
@@ -275,8 +398,17 @@ export function Captura() {
       <div className={styles.tarjeta}>
         <p className={styles.exito}>
           {carta?.name ?? "La carta"} quedó registrada
-          {estadoFoto === "error" ? ", sin la foto (falló la subida)." : "."}
+          {estadoFoto === "error"
+            ? ". La foto se guardó en este dispositivo, pero todavía no se subió."
+            : "."}
         </p>
+        {estadoFoto === "error" && (
+          <p className={styles.estadoFoto}>
+            <button type="button" className={styles.reintentar} onClick={reintentarFoto}>
+              Reintentar subir la foto
+            </button>
+          </p>
+        )}
         <div className={styles.accionesFinales}>
           <a className={styles.botonPrimario} href="/">
             Ir al binder
@@ -291,6 +423,24 @@ export function Captura() {
 
   return (
     <div className={styles.tarjeta}>
+      {pendientes.length > 0 && (
+        <div className={styles.pendientes}>
+          <p>
+            Tienes {pendientes.length} {pendientes.length === 1 ? "foto" : "fotos"} pendiente
+            {pendientes.length === 1 ? "" : "s"} de subir de una sesión anterior.
+          </p>
+          {errorReanudar && <p className={styles.error}>{errorReanudar}</p>}
+          <button
+            type="button"
+            className={styles.pendientesBoton}
+            onClick={reanudarPendientes}
+            disabled={reanudando}
+          >
+            {reanudando ? "Subiendo…" : "Reanudar subida"}
+          </button>
+        </div>
+      )}
+
       <label className={styles.camara}>
         <input
           type="file"
@@ -312,7 +462,8 @@ export function Captura() {
         {estadoFoto === "lista" && "Foto guardada."}
         {estadoFoto === "error" && (
           <>
-            No se pudo subir la foto. El ejemplar se guarda igual.{" "}
+            No se pudo subir la foto todavía. Queda guardada en este dispositivo — puedes
+            reintentar cuando quieras.{" "}
             <button type="button" className={styles.reintentar} onClick={reintentarFoto}>
               Reintentar
             </button>
