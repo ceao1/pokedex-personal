@@ -10,6 +10,15 @@ class Recognition(BaseModel):
 
     name: str | None = None
     set_name: str | None = None
+    # El código impreso junto al número en la carta física (`ASC`, `BS`,
+    # `JU`) -- lo que el modelo puede *leer*, a diferencia de `set_name`,
+    # que le pide *recordar* un nombre que muchas veces ni siquiera aparece
+    # impreso. Es la señal más fuerte del resolutor (ver
+    # `recognition/resolver.py`): única entre 188 de los 218 sets del
+    # catálogo. `null` si la carta no lo imprime o no se distingue --nunca
+    # se deduce del nombre del set, porque eso volvería a ser memoria en
+    # vez de lectura.
+    set_code: str | None = None
     number: str | None = None
     rarity: str | None = None
     # Especie base y número de Pokédex nacional -- distintos de `name`, que es

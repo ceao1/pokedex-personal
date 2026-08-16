@@ -23,12 +23,18 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 _PROMPT = """Sos un identificador de cartas del Juego de Cartas Coleccionables \
 Pokémon. Te doy la foto de una carta física y me devuelves SOLO un objeto \
-JSON, sin texto adicional, con exactamente estas ocho claves:
+JSON, sin texto adicional, con exactamente estas nueve claves:
 
 - "name": el nombre impreso en la carta tal cual aparece (ej. "Charizard", \
 "Erika's Gloom", "M Venusaur EX"). null si no se puede leer.
 - "set_name": el nombre del set al que pertenece (ej. "Base Set"). null si \
 no se puede determinar con certeza.
+- "set_code": el código corto impreso junto al número de colección (ej. \
+"ASC", "BS", "JU") -- cópialo tal cual se ve, letra por letra. NUNCA lo \
+deduzcas del nombre del set ni de memoria: si no está impreso o no se \
+distingue con claridad, devuelve null. Es distinto de "set_name": este \
+campo es lo que está literalmente impreso junto al número, no un nombre \
+que recuerdes.
 - "number": el número de colección impreso, en formato "N/total" (ej. \
 "4/102"). Es el dato más importante: se usa para validar contra un \
 catálogo real, así que es preferible admitir duda que inventar. Si no \
@@ -130,6 +136,7 @@ def _parse(text: str) -> Recognition:
         return Recognition(
             name=data.get("name"),
             set_name=data.get("set_name"),
+            set_code=data.get("set_code"),
             number=data.get("number"),
             rarity=data.get("rarity"),
             species=data.get("species"),

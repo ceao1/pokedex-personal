@@ -170,6 +170,9 @@ class FakeCatalog:
     async def list_sets(self):
         return self._sets
 
+    async def get_set_detail(self, set_id: str):
+        return next((s for s in self._sets if s.id == set_id), None)
+
 
 DOWNLOAD_URL = f"https://fake.storage.test/download/{DRAFT}/front.jpg?expires=600"
 
@@ -228,7 +231,12 @@ async def test_identificar_con_confianza_alta_devuelve_la_carta(client, conn_fac
 
 
 @respx.mock
-async def test_identificar_con_confianza_baja_no_devuelve_carta(client, conn_factory, http_client):
+async def test_identificar_con_confianza_baja_pero_catalogo_confirma_devuelve_la_carta(
+    client, conn_factory, http_client
+):
+    """La confianza del modelo ya no veta (task "identificar por lo impreso
+    en la carta"): lo que decide es si el catálogo confirma. Reproduce el
+    caso real del dueño (Groudon, confidence 0.5) a escala de la ruta HTTP."""
     client.post("/captures", json={"client_draft_id": DRAFT})
     client.post(f"/captures/{DRAFT}/photo-uploaded")
     respx.get(DOWNLOAD_URL).mock(
@@ -238,6 +246,37 @@ async def test_identificar_con_confianza_baja_no_devuelve_carta(client, conn_fac
         name="Charizard",
         set_name="Base Set",
         number="4/102",
+        confidence=0.3,
+        needs_review=False,
+    )
+    app.dependency_overrides[get_identification_service] = lambda: _identification_service(
+        reconocido, conn_factory, http_client
+    )
+
+    response = client.post(f"/captures/{DRAFT}/identificar")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["carta"]["id"] == "base1-4"
+    assert body["necesita_revision"] is False
+
+
+@respx.mock
+async def test_identificar_sin_confirmacion_del_catalogo_no_devuelve_carta(
+    client, conn_factory, http_client
+):
+    """La contraparte: sin nada que el catálogo pueda confirmar (número
+    inexistente en el set), la duda del modelo ya no importa -- pero
+    tampoco resuelve porque no hay ninguna carta real detrás."""
+    client.post("/captures", json={"client_draft_id": DRAFT})
+    client.post(f"/captures/{DRAFT}/photo-uploaded")
+    respx.get(DOWNLOAD_URL).mock(
+        return_value=httpx.Response(200, content=b"foto", headers={"content-type": "image/jpeg"})
+    )
+    reconocido = Recognition(
+        name="Charizard",
+        set_name="Base Set",
+        number="999/102",
         confidence=0.3,
         needs_review=False,
     )
