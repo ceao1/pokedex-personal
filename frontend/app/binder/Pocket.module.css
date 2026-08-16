@@ -1,6 +1,8 @@
 .pocket {
   position: relative;
   display: block;
+  color: inherit;
+  text-decoration: none;
   aspect-ratio: 5 / 7;
   border-radius: var(--radius);
   background: linear-gradient(170deg, var(--pocket), var(--binder-deep));
@@ -110,7 +112,7 @@
 }
 
 .pocket:hover .sheen,
-.pocket:focus-within .sheen {
+.pocket:focus-visible .sheen {
   transition: translate 700ms ease-out;
   translate: 110% 0;
 }

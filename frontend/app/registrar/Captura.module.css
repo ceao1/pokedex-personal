@@ -1,0 +1,257 @@
+.pantalla {
+  max-inline-size: 480px;
+  inline-size: 100%;
+  margin-inline: auto;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.encabezado {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.volver {
+  align-self: flex-start;
+  font-size: var(--step-0);
+  color: var(--stock-dim);
+}
+
+.volver:hover,
+.volver:focus-visible {
+  color: var(--stock);
+}
+
+.titulo {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 800;
+  font-size: var(--step-3);
+  letter-spacing: -0.02em;
+}
+
+.tarjeta {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: linear-gradient(170deg, var(--pocket), var(--binder-deep));
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 45%, transparent);
+  border-radius: var(--radius);
+}
+
+.camara {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 5 / 7;
+  max-block-size: 320px;
+  border: 1px dashed color-mix(in srgb, var(--sleeve-edge) 60%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--binder-deep) 70%, transparent);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.camara:focus-within {
+  outline: 2px solid var(--lens);
+  outline-offset: 3px;
+}
+
+.inputOculto {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.camaraTexto {
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--stock-dim);
+  text-align: center;
+  padding: 0 1rem;
+}
+
+.preview {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+.estadoFoto {
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.reintentar {
+  font-weight: 600;
+  color: var(--lens);
+  text-decoration: underline;
+}
+
+.fila {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: var(--gap);
+  /* Los items de grid no se encogen bajo su ancho de contenido por
+     defecto (min-inline-size: auto); en un input eso puede ser más
+     ancho que la columna y desbordar la página en pantallas angostas. */
+  min-inline-size: 0;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+  min-inline-size: 0;
+}
+
+.campo input {
+  font: inherit;
+  font-family: var(--font-data), monospace;
+  font-size: var(--step-1);
+  color: var(--stock);
+  background: var(--binder-deep);
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 50%, transparent);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.7rem;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.campo input::placeholder {
+  color: color-mix(in srgb, var(--stock-dim) 70%, transparent);
+}
+
+.hint {
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.error {
+  font-size: var(--step--1);
+  color: var(--shell);
+}
+
+.cartaEncontrada {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.cartaImagen {
+  inline-size: 64px;
+  block-size: 90px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: none;
+}
+
+.cartaNombre {
+  font-weight: 700;
+}
+
+.cartaDetalle {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+.chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.grupoChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 55%, transparent);
+  font-size: var(--step--1);
+  font-weight: 600;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.chip:hover {
+  background: color-mix(in srgb, var(--sleeve-edge) 25%, transparent);
+}
+
+.chipActivo {
+  border-color: var(--lens);
+  background: color-mix(in srgb, var(--lens) 25%, transparent);
+  color: var(--stock);
+}
+
+.botonGuardar {
+  padding: 0.85rem;
+  border-radius: var(--radius);
+  background: var(--shell);
+  color: var(--stock);
+  font-weight: 700;
+  font-size: var(--step-1);
+  text-align: center;
+}
+
+.botonGuardar:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.botonGuardar:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--shell) 85%, black);
+}
+
+.exito {
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.accionesFinales {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.botonPrimario,
+.botonSecundario {
+  display: block;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  font-weight: 700;
+  text-align: center;
+}
+
+.botonPrimario {
+  background: var(--shell);
+  color: var(--stock);
+}
+
+.botonPrimario:hover {
+  background: color-mix(in srgb, var(--shell) 85%, black);
+}
+
+.botonSecundario {
+  border: 1px solid color-mix(in srgb, var(--sleeve-edge) 55%, transparent);
+}
+
+.botonSecundario:hover {
+  background: color-mix(in srgb, var(--sleeve-edge) 25%, transparent);
+}
+
+@media (max-width: 359px) {
+  .fila {
+    grid-template-columns: 1fr;
+  }
+}

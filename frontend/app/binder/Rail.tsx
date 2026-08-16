@@ -1,3 +1,4 @@
+import Link from "next/link";
 import styles from "./Rail.module.css";
 
 type Props = {
@@ -41,6 +42,10 @@ export function Rail({ total, conseguidos, costoRestanteUsd }: Props) {
         </p>
         <p className={styles.hint}>Sumando la ruta más económica de cada uno.</p>
       </section>
+
+      <Link href="/registrar" className={styles.registrar}>
+        Registrar una carta
+      </Link>
     </aside>
   );
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Pokemon } from "../lib/types";
 import styles from "./Pocket.module.css";
 
@@ -15,13 +16,14 @@ export function Pocket({ pokemon, index }: Props) {
   const dex = String(pokemon.dex_number).padStart(3, "0");
 
   return (
-    <article
+    <Link
+      href="/registrar"
       className={`${styles.pocket} ${conseguido ? styles.owned : styles.hunting}`}
       style={{ "--delay": `${index * 20}ms` } as React.CSSProperties}
       aria-label={
         conseguido
-          ? `${pokemon.name}, número ${dex}, en el binder`
-          : `${pokemon.name}, número ${dex}, todavía no lo tienes`
+          ? `${pokemon.name}, número ${dex}, en el binder. Registrar otro ejemplar.`
+          : `${pokemon.name}, número ${dex}, todavía no lo tienes. Registrarlo.`
       }
     >
       {pokemon.primary_image_url ? (
@@ -46,6 +48,6 @@ export function Pocket({ pokemon, index }: Props) {
           <span className={styles.price}>${pokemon.primary_price_usd.toFixed(2)}</span>
         )}
       </footer>
-    </article>
+    </Link>
   );
 }
