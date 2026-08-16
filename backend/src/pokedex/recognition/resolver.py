@@ -74,6 +74,15 @@ DEX_MIN, DEX_MAX = 1, 151
 # fotos por identificación no compensa: se devuelven para revisión manual.
 DESEMPATE_MIN, DESEMPATE_MAX = 2, 5
 
+# Doce cartas por tanda es el máximo medido sin error (ver el plan): a 24 el
+# modelo leyó un `047` como `022` con confianza 0.98 y sin marcar duda
+# alguna -- un número equivocado que existe en el catálogo, así que pasa
+# toda validación. `resolver_varias` no recorta a este límite (una lectura
+# real no se descarta por venir en un lote grande), pero marca
+# `excede_limite` para que el humano revise con más cuidado el arte de cada
+# propuesta en vez de confiar en el número.
+MAX_TANDA = 12
+
 _NUMBER_WITH_SLASH_RE = re.compile(r"^\s*([^\s/]+)\s*/\s*(\d+)\s*$")
 _NUMBER_BARE_RE = re.compile(r"^\s*([^\s/]+)\s*$")
 
@@ -102,6 +111,22 @@ class ResolucionCarta(BaseModel):
     # para que la pantalla pueda mostrarlas u ofrecer un desempate manual.
     # Vacía en cualquier otro caso, incluido el éxito con una sola carta.
     candidatas: list[Card] = []
+
+
+class ResolucionTanda(BaseModel):
+    """Resultado de `CardResolver.resolver_varias` (task 3): una foto con
+    varias cartas. Cada lectura pasó por `resolver()` entero, una por una --
+    las mismas reglas de siempre, nada nuevo que validar (spec del plan:
+    "se reutiliza entero")."""
+
+    resoluciones: list[ResolucionCarta] = []
+    # Cuántas cartas devolvió la identificación, para que la pantalla lo
+    # contraste contra lo que el dueño dijo que había (spec del plan).
+    total_encontradas: int
+    # Más de `MAX_TANDA`: se aceptan igual (`resoluciones` las trae todas),
+    # pero el límite medido sin error ya quedó atrás -- el humano debe
+    # revisar el arte de cada propuesta con más cuidado.
+    excede_limite: bool
 
 
 def _normalize_name(name: str) -> str:
@@ -268,6 +293,24 @@ class CardResolver:
                 "resuelva contra el catálogo, y sin nombre de set reconocible"
             ),
             necesita_revision=True,
+        )
+
+    async def resolver_varias(self, foto: bytes, mime_type: str) -> ResolucionTanda:
+        """Task 3: identifica varias cartas en una sola foto y resuelve cada
+        lectura por separado contra `resolver()` -- entero, sin una segunda
+        ruta de validación. No se le pasa la foto compuesta a `resolver()`
+        (parámetro `foto` de ese método): el desempate por imagen necesita el
+        recorte de una carta puntual, no la foto de doce cartas juntas, así
+        que ahí simplemente no se intenta y una candidata ambigua cae a
+        revisión manual -- el comportamiento seguro por defecto."""
+        if self._recognition is None:
+            raise RuntimeError("resolver_varias necesita un RecognitionPort")
+        lecturas = await self._recognition.identificar_varias(foto, mime_type)
+        resoluciones = [await self.resolver(lectura) for lectura in lecturas]
+        return ResolucionTanda(
+            resoluciones=resoluciones,
+            total_encontradas=len(lecturas),
+            excede_limite=len(lecturas) > MAX_TANDA,
         )
 
     async def _resolver_en_sets(

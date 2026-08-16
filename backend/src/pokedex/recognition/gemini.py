@@ -22,6 +22,19 @@ _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:gen
 # frecuencia aunque el prompt y `responseMimeType` pidan lo contrario.
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
+# Task 3 (foto por tanda): medido a mano contra la API real (ver el plan),
+# Gemini a veces devuelve el código de set pegado al sufijo de idioma de
+# TCGdex -- "ASCen" en vez de "ASC" -- como si copiara el segmento `/en/` de
+# la URL del arte junto con el código impreso. Los códigos reales del
+# catálogo son mayúsculas y dígitos (`ASC`, `BS`, `JU`; ver
+# `abbreviation.official` y `tests/catalog/test_tcgdex.py`); un sufijo de
+# exactamente dos minúsculas después de ese prefijo nunca es parte del
+# código, así que se separa antes de que llegue a `CardResolver.
+# set_por_codigo`, que compara contra el catálogo tal cual. Dos minúsculas
+# (no "una o más") para no comerse por error un código real que terminara en
+# minúscula.
+_LANGUAGE_SUFFIX_RE = re.compile(r"^([A-Z0-9]{2,})([a-z]{2})$")
+
 _PROMPT = """Sos un identificador de cartas del Juego de Cartas Coleccionables \
 Pokémon. Te doy la foto de una carta física y me devuelves SOLO un objeto \
 JSON, sin texto adicional, con exactamente estas nueve claves:
@@ -81,6 +94,35 @@ revisaría nadie.
 
 Devuelve únicamente el objeto JSON, sin explicación ni formato adicional."""
 
+# Task 3 (compras por tanda): identifica varias cartas extendidas en una
+# sola foto. Doce por tanda es el límite medido sin error (ver el plan) --
+# no se lo impone acá al modelo como un tope duro, porque un tope en el
+# prompt no evita que devuelva trece si hay trece; el aviso de "revisa con
+# más cuidado" lo decide el llamador contando la respuesta
+# (`CardResolver.resolver_varias`).
+_PROMPT_TANDA = """Sos un identificador de cartas del Juego de Cartas Coleccionables \
+Pokémon. Te doy una foto con varias cartas físicas distintas, extendidas una \
+junto a otra. Identifica CADA carta que puedas ver y devuelve SOLO un array \
+JSON, sin texto adicional, donde cada elemento es un objeto con exactamente \
+las mismas nueve claves que usarías para una sola carta: "name", \
+"set_name", "set_code", "number", "rarity", "species", "dex_number", \
+"confidence", "needs_review" -- mismo significado y mismas reglas que para \
+una carta sola. "number" sigue siendo el dato más importante: un número \
+inventado que exista en el catálogo es el peor resultado posible, así que \
+ante la duda preferí "number": null, confidence bajo y needs_review: true.
+
+Reglas propias de esta foto con varias cartas:
+- Un elemento del array por cada carta que VES en la foto, en el orden en \
+que aparecen (de izquierda a derecha, de arriba a abajo). NUNCA inventes \
+una carta que no está en la foto, y NUNCA te saltees una que sí está aunque \
+no puedas leerla bien -- en ese caso, devolvé el elemento igual, con los \
+campos que no pudiste leer en null y "needs_review": true.
+- "set_code": copiá tal cual lo impreso junto al número, SIN agregar el \
+código de idioma ni ningún otro sufijo -- solo el código del set, letra por \
+letra.
+
+Devuelve únicamente el array JSON, sin explicación ni formato adicional."""
+
 
 class GeminiRecognition:
     def __init__(self, api_key: str, model: str, client: httpx.AsyncClient) -> None:
@@ -124,6 +166,35 @@ class GeminiRecognition:
             raise GeminiRequestError(exc.response.status_code) from None
         text = _extract_text(response.json())
         return _parse(text)
+
+    async def identificar_varias(self, foto: bytes, mime_type: str) -> list[Recognition]:
+        url = _ENDPOINT.format(model=self._model)
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": _PROMPT_TANDA},
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64.b64encode(foto).decode("ascii"),
+                            }
+                        },
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0,
+                "responseMimeType": "application/json",
+            },
+        }
+        try:
+            response = await self._client.post(url, params={"key": self._api_key}, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise GeminiRequestError(exc.response.status_code) from None
+        text = _extract_text(response.json())
+        return _parse_varias(text)
 
     async def elegir_entre(self, foto: bytes, candidatas: list[CandidataImagen]) -> str | None:
         # `image/jpeg` para la foto del dueño: `CaptureService._front_path`
@@ -177,21 +248,22 @@ def _extract_text(body: dict) -> str:
     return body["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def _parse(text: str) -> Recognition:
-    cleaned = _FENCE_RE.sub("", text.strip())
-    try:
-        data = json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError):
-        # Texto que no es JSON -- una carta mal leída no puede tumbar el
-        # registro, así que esto es un resultado normal, no una excepción.
-        return Recognition(needs_review=True, confidence=0.0, raw={"text": text})
-    if not isinstance(data, dict):
-        return Recognition(needs_review=True, confidence=0.0, raw={"text": text})
+def _strip_language_suffix(set_code: str | None) -> str | None:
+    """Separa el sufijo de idioma que Gemini a veces pega al código de set
+    (`ASCen` -> `ASC`, ver `_LANGUAGE_SUFFIX_RE`). `None` y cadenas sin ese
+    patrón vuelven tal cual."""
+    if not set_code:
+        return set_code
+    match = _LANGUAGE_SUFFIX_RE.match(set_code)
+    return match.group(1) if match else set_code
+
+
+def _recognition_from_dict(data: dict) -> Recognition:
     try:
         return Recognition(
             name=data.get("name"),
             set_name=data.get("set_name"),
-            set_code=data.get("set_code"),
+            set_code=_strip_language_suffix(data.get("set_code")),
             number=data.get("number"),
             rarity=data.get("rarity"),
             species=data.get("species"),
@@ -205,6 +277,37 @@ def _parse(text: str) -> Recognition:
         # `dex_number: "seis"`). Mismo principio que un JSON inválido: una
         # lectura rara no puede tumbar el registro.
         return Recognition(needs_review=True, confidence=0.0, raw=data)
+
+
+def _parse(text: str) -> Recognition:
+    cleaned = _FENCE_RE.sub("", text.strip())
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        # Texto que no es JSON -- una carta mal leída no puede tumbar el
+        # registro, así que esto es un resultado normal, no una excepción.
+        return Recognition(needs_review=True, confidence=0.0, raw={"text": text})
+    if not isinstance(data, dict):
+        return Recognition(needs_review=True, confidence=0.0, raw={"text": text})
+    return _recognition_from_dict(data)
+
+
+def _parse_varias(text: str) -> list[Recognition]:
+    """Parsea la respuesta de `identificar_varias`: un array JSON, uno por
+    carta. Cualquier cosa que no sea ese array -- JSON inválido, un objeto
+    suelto, texto plano -- se trata como "no encontré ninguna" en vez de
+    reventar: una tanda mal leída no puede tumbar el registro, igual que
+    `_parse` para una sola carta. Los elementos que no son objetos (el
+    modelo mete `null` o texto suelto) se descartan en silencio -- no son
+    una carta, así que no hay nada que resolver ahí."""
+    cleaned = _FENCE_RE.sub("", text.strip())
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [_recognition_from_dict(item) for item in data if isinstance(item, dict)]
 
 
 def _parse_card_id(text: str) -> str | None:
@@ -232,18 +335,27 @@ class FakeRecognition:
         result: Recognition | None = None,
         error: Exception | None = None,
         elegir_resultado: str | None = None,
+        resultado_varias: list[Recognition] | None = None,
     ) -> None:
         self.result = result if result is not None else Recognition()
         self.error = error
         self.elegir_resultado = elegir_resultado
+        self.resultado_varias = resultado_varias if resultado_varias is not None else []
         self.calls: list[tuple[bytes, str]] = []
         self.elegir_calls: list[tuple[bytes, list[CandidataImagen]]] = []
+        self.varias_calls: list[tuple[bytes, str]] = []
 
     async def identify(self, image: bytes, mime_type: str) -> Recognition:
         self.calls.append((image, mime_type))
         if self.error is not None:
             raise self.error
         return self.result
+
+    async def identificar_varias(self, foto: bytes, mime_type: str) -> list[Recognition]:
+        self.varias_calls.append((foto, mime_type))
+        if self.error is not None:
+            raise self.error
+        return self.resultado_varias
 
     async def elegir_entre(self, foto: bytes, candidatas: list[CandidataImagen]) -> str | None:
         self.elegir_calls.append((foto, candidatas))
