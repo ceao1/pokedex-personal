@@ -376,6 +376,28 @@ def test_una_carta_vendida_no_cuenta_como_conseguida(clean_db):
     assert fila["owned_count"] == 0
 
 
+def test_el_bolsillo_muestra_tu_carta_cuando_la_tienes(clean_db):
+    """Con la carta en la mano ya no persigues nada: el bolsillo enseña la tuya."""
+    from uuid import uuid4
+
+    _sembrar_carta(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    clean_db.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, dex_number, image_url, raw)
+        values ('base1-44', 'Bulbasaur', 'base1', 'Base Set', '44', 1,
+                'https://x/base/44/high.png', '{}'::jsonb)
+        """
+    )
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'base1-44')",
+        (uuid4(),),
+    )
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["primary_image_url"] == "https://x/base/44/high.png"
+    assert fila["owned_count"] == 1
+
+
 def test_dos_ejemplares_de_la_misma_carta_cuentan_dos(clean_db):
     """Un duplicado es un ejemplar más, no un Pokémon más — el progreso del
     151 se calcula sobre Pokémon distintos, no sobre este conteo."""

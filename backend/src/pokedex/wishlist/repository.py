@@ -106,13 +106,44 @@ select p.dex_number,
           join app.card oc on oc.id = o.card_id
          where oc.dex_number = p.dex_number
            and o.lifecycle_status <> 'vendida') as owned_count,
-       -- Carta y precio de la ruta preferida. `source_option` ordena
-       -- alfabéticamente y 'opcion_1' es la primera, así que esto devuelve la
-       -- ruta económica del set 151 cuando resolvió.
-       (array_agg(c.image_url order by w.source_option)
-          filter (where c.image_url is not null))[1] as primary_image_url,
-       (array_agg(c.name order by w.source_option)
-          filter (where c.image_url is not null))[1] as primary_card_name,
+       -- El bolsillo muestra tu carta en cuanto la tienes: ya no persigues
+       -- nada, y la que tienes puede ser otra impresión. Subconsulta
+       -- escalar (con `limit 1`, no un join) para no multiplicar las filas
+       -- ya agrupadas por p.dex_number -- este repositorio ya tuvo ese bug
+       -- dos veces. Sin ejemplares, cae a la ruta más barata de siempre.
+       coalesce(
+         (select oc.image_url
+            from app.owned_copy o
+            join app.card oc on oc.id = o.card_id
+           where oc.dex_number = p.dex_number
+             and o.lifecycle_status <> 'vendida'
+           -- `created_at` es hora de transacción, no un reloj por fila: dos
+           -- ejemplares insertados en la misma transacción empatan. `id`
+           -- desempata igual en las dos subconsultas -- de lo contrario la
+           -- imagen podría venir de una impresión y el nombre de otra.
+           order by o.created_at desc, o.id desc
+           limit 1),
+         (array_agg(c.image_url order by w.source_option)
+            filter (where c.image_url is not null))[1]
+       ) as primary_image_url,
+       coalesce(
+         (select oc.name
+            from app.owned_copy o
+            join app.card oc on oc.id = o.card_id
+           where oc.dex_number = p.dex_number
+             and o.lifecycle_status <> 'vendida'
+           -- `created_at` es hora de transacción, no un reloj por fila: dos
+           -- ejemplares insertados en la misma transacción empatan. `id`
+           -- desempata igual en las dos subconsultas -- de lo contrario la
+           -- imagen podría venir de una impresión y el nombre de otra.
+           order by o.created_at desc, o.id desc
+           limit 1),
+         (array_agg(c.name order by w.source_option)
+            filter (where c.image_url is not null))[1]
+       ) as primary_card_name,
+       -- primary_price_usd NO cambia de significado: sigue siendo el costo
+       -- de la ruta más barata, porque alimenta "Completar el 151", que solo
+       -- suma los Pokémon que aún no se tienen.
        (array_agg(v.price_usd order by w.source_option)
           filter (where v.price_usd is not null))[1] as primary_price_usd,
        -- Misma máscara de filtro que primary_price_usd: el precio y su

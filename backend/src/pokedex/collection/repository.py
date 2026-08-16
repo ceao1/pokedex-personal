@@ -45,6 +45,27 @@ where capture_status <> 'listo'
 order by created_at
 """
 
+# Ejemplares de un Pokémon puntual, para la ficha (spec: "varios ejemplares
+# por Pokémon"). Se une con `card` por `dex_number` de la carta -- no del
+# ejemplar, que no lo tiene -- y trae ya el nombre, el set, el arte, la
+# rareza y el `local_id` de esa carta, para que la ficha se dibuje sin una
+# segunda consulta. Excluye las vendidas: una carta que ya no está en el
+# binder no es un ejemplar que el dueño "tiene".
+_LISTAR_POR_DEX = """
+select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id,
+       c.image_url, c.rarity, o.variant_label, o.condition,
+       o.purchase_price_usd, o.photo_front_url, o.photo_thumb_url,
+       o.notes, o.created_at
+from app.owned_copy o
+join app.card c on c.id = o.card_id
+where c.dex_number = %(dex_number)s
+  and o.lifecycle_status <> 'vendida'
+-- `created_at` es hora de transacción: varios ejemplares insertados en la
+-- misma transacción comparten el mismo valor. `id` desempata de forma
+-- estable (los ids son consecutivos, así que el más reciente tiene el mayor).
+order by o.created_at desc, o.id desc
+"""
+
 # Todas las columnas que `OwnedCopyIn` puede tocar, en el orden en que se
 # arma el SET dinámico -- incluye `card_id`/`variant_id` porque el flujo de
 # identificación de la carta también viaja como un PATCH más.
@@ -111,3 +132,11 @@ def obtener(conn: Connection, client_draft_id: UUID) -> OwnedCopy | None:
 def listar_pendientes(conn: Connection) -> list[OwnedCopy]:
     rows = conn.execute(_LIST_PENDIENTES).fetchall()
     return [OwnedCopy(**row) for row in rows]
+
+
+def listar_por_dex(conn: Connection, dex_number: int) -> list[dict]:
+    """Los ejemplares que el dueño ya tiene de un Pokémon puntual, más
+    recientes primero. Filas planas (no `OwnedCopy`): traen columnas de
+    `card` que ese modelo no tiene, para que la ficha del Pokémon se dibuje
+    sin una segunda consulta."""
+    return conn.execute(_LISTAR_POR_DEX, {"dex_number": dex_number}).fetchall()
