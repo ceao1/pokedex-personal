@@ -57,6 +57,47 @@
   color: var(--stock);
 }
 
+/* Una página de binder se ve entera de un vistazo: en escritorio los
+   nueve bolsillos y el paginador tienen que caber en el alto de la
+   ventana, sin scroll. Se invierte quién manda: en vez de que el ancho
+   de columna fije el alto de la carta (5:7), el alto disponible de la
+   fila fija el alto de la carta y el ancho sale de la proporción. */
+@media (min-width: 900px) {
+  .shell {
+    block-size: 100dvh;
+    overflow: hidden;
+  }
+
+  .spread {
+    block-size: 100%;
+    min-block-size: 0;
+    gap: 1rem;
+    padding-block: 1.25rem;
+  }
+
+  .grid {
+    flex: 1 1 0;
+    min-block-size: 0;
+    grid-template-columns: repeat(3, max-content);
+    grid-template-rows: repeat(3, 1fr);
+    justify-content: center;
+    justify-items: center;
+  }
+
+  /* Los hijos de .grid son los <Pocket>: se estiran al alto de su
+     fila y el ancho sale solo del aspect-ratio 5:7 que ya traen.
+     El tope evita cartas absurdas en un monitor muy alto. */
+  .grid > * {
+    inline-size: auto;
+    block-size: 100%;
+    max-block-size: 360px;
+  }
+
+  .pager {
+    flex: none;
+  }
+}
+
 @media (max-width: 899px) {
   .shell {
     /* Un contenedor de grid le da a .rail una fila propia del tamaño
