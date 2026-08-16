@@ -1,10 +1,10 @@
-# Identificar por el número impreso, no por el nombre del set — Implementation Plan
+# Identificar por lo impreso en la carta, no por el nombre del set — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Que una foto de una carta se identifique sola cuando el catálogo puede confirmarla, en vez de rechazarla porque el modelo no supo nombrar el set.
 
-**Architecture:** El resolutor deja de apoyarse en `set_name` y pasa a apoyarse en el número impreso `NNN/TTT`. El denominador acota los sets candidatos, el numerador la carta dentro de cada uno, y la especie y el `dexId` confirman. La duda del modelo deja de ser un veto y pasa a ser una señal entre varias.
+**Architecture:** El resolutor deja de apoyarse en `set_name` y pasa a apoyarse en lo que está **impreso junto al número**: el código del set y el número `NNN/TTT`. El código identifica el set sin ambigüedad; el denominador es el respaldo cuando no lo hay; la especie y el `dexId` confirman. La duda del modelo deja de ser un veto y pasa a ser una señal entre varias.
 
 **Spec:** `docs/superpowers/specs/2026-08-15-pokedex-viviente-design.md` §5.2 y §6.2
 
@@ -19,9 +19,19 @@ El dueño fotografió dos cartas suyas de Ascended Heroes. El sistema rechazó l
 
 **Acertó todo lo verificable en ambas.** `217` identifica un único set entre los 218 del catálogo. Las dos eran resolubles con certeza y se descartaron.
 
+### El código de set, que es la señal más fuerte
+
+Lo señaló el dueño: junto al número va impreso el código del set — en sus cartas, `ASC`. Verificado contra el catálogo:
+
+- TCGdex lo expone como `abbreviation.official` en el detalle de cada set (`me02.5` → `ASC`).
+- **188 de los 218 sets lo tienen, y las 188 abreviaturas son únicas: cero colisiones.** `BS` es Base Set, `JU` Jungle, `FO` Fossil.
+- Los 30 sin abreviatura son los antiguos, donde la carta física tampoco la lleva.
+
+Es un identificador perfecto cuando existe, y muy superior al denominador, único solo en 62 de 218. Pasa a ser la vía principal.
+
 Dos errores de diseño, los dos míos:
 
-1. **Depender de `set_name`** es pedirle al modelo que *recuerde* un nombre en vez de *leer* lo impreso. El denominador está impreso en la carta y lo lee sin fallar; el nombre del set, muchas veces, ni aparece.
+1. **Depender de `set_name`** es pedirle al modelo que *recuerde* un nombre en vez de *leer* lo impreso. El código y el número están impresos en la carta; el nombre del set, muchas veces, ni aparece.
 2. **Vetar por `needs_review`** descarta la lectura aunque el catálogo la confirme por tres vías independientes. La autoevaluación del modelo es información útil, no una autoridad por encima de los hechos.
 
 ## Global Constraints
@@ -48,7 +58,9 @@ Dos errores de diseño, los dos míos:
 
 - [ ] **Step 1: Tests**
 
-`sets_por_total(217)` devuelve exactamente un set, `me02.5`. `sets_por_total(102)` devuelve Base Set entre otros — hay tamaños repetidos y devolver varios es correcto. Un total que no existe devuelve lista vacía. La lista de sets se pide **una sola vez** aunque se consulten varios totales.
+`set_por_codigo("ASC")` devuelve `me02.5`; `set_por_codigo("asc")` también, sin distinguir mayúsculas; un código inexistente devuelve `None`. `sets_por_total(217)` devuelve exactamente un set. `sets_por_total(102)` devuelve varios — hay tamaños repetidos y devolver varios es correcto. La lista se pide **una sola vez** aunque se consulten varios códigos y totales.
+
+Ojo: la abreviatura vive en el **detalle** de cada set, no en el listado. Traer los 218 detalles en cada arranque sería caro; construir el índice una vez y cachearlo, o resolver bajo demanda y memorizar. La decisión es tuya, pero documenta cuál tomaste y por qué.
 
 - [ ] **Step 2: Implementar**
 
@@ -64,17 +76,22 @@ Esta es la task que arregla el problema.
 - Modify: `backend/src/pokedex/recognition/resolver.py`
 - Test: `backend/tests/recognition/test_resolver.py`
 
-- [ ] **Step 1: Parsear el número impreso**
+- [ ] **Step 1: Pedir y parsear lo impreso**
 
-`NNN/TTT` con tolerancia: `176/217`, `002/217`, `4/102`, espacios alrededor de la barra. Si no hay barra, se conserva el numerador y el denominador queda nulo.
+El prompt de Gemini gana un campo: `set_code`, el código impreso junto al número (`ASC`, `BS`, `JU`). Se le dice que copie lo que ve y que ponga `null` si no lo distingue — nunca que lo deduzca del nombre del set, porque entonces vuelve a ser memoria en vez de lectura.
+
+El número se parsea con tolerancia: `176/217`, `002/217`, `4/102`, con espacios alrededor de la barra. Sin barra, se conserva el numerador y el denominador queda nulo.
 
 - [ ] **Step 2: La cascada de resolución**
 
 En este orden, parando en cuanto haya una única candidata:
 
-1. **Por denominador.** Sets cuyo total oficial sea `TTT`. Para cada uno, buscar la carta `NNN`. Quedarse con las que **confirmen** (ver abajo).
-2. **Por `set_name`**, si el modelo lo dio y resuelve a un set conocido. Sigue siendo una señal válida cuando existe.
-3. **Sin resolver**, con motivo explícito.
+1. **Por código de set.** `set_code` contra `abbreviation.official`, sin distinguir mayúsculas. Es único, así que da un solo set: se busca la carta `NNN` y se **confirma** (ver abajo).
+2. **Por denominador.** Sets cuyo total oficial sea `TTT`. Para cada uno, buscar la carta `NNN`. Quedarse con las que confirmen.
+3. **Por `set_name`**, si el modelo lo dio y resuelve a un set conocido. Sigue siendo una señal válida cuando existe.
+4. **Sin resolver**, con motivo explícito.
+
+Cuando el código y el denominador apunten a sets distintos, **no se elige**: es una contradicción y va a revisión, igual que cuando el `dexId` contradice la especie.
 
 - [ ] **Step 3: Qué cuenta como confirmación**
 
@@ -97,8 +114,11 @@ Escribir uno por fila, con un catálogo falso:
 
 | Entrada | Resultado |
 |---|---|
-| `176/217`, Drampa, dex 780; el set 217 tiene Drampa en 176 con dexId 780 | resuelve, aunque `needs_review` sea true |
+| `ASC`, `176/217`, Drampa, dex 780 | resuelve por el código, sin mirar el denominador |
+| sin código, `176/217`, Drampa, dex 780 | resuelve por el denominador |
 | `108/217`, Groudon, dex 383 | resuelve |
+| código `ASC` pero denominador de otro set | rechaza: señales contradictorias |
+| código que no existe en el catálogo | cae al denominador |
 | denominador que casa con tres sets, uno solo con esa carta | resuelve |
 | denominador que casa con tres sets, dos con esa carta | no resuelve solo: candidatas para desempate |
 | el número existe pero el `dexId` contradice la especie | rechaza, motivo explícito |
