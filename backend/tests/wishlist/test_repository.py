@@ -62,12 +62,43 @@ def test_el_reimport_no_pisa_una_correccion_manual(clean_db):
     """auto_resolved=false significa que el humano ya lo revisó."""
     _sembrar_carta(clean_db)
     repository.upsert_wishlist_item(clean_db, _item(auto_resolved=True))
-    clean_db.execute(
-        "update app.wishlist_item set auto_resolved = false, card_id = 'sv03.5-001'"
-    )
+    clean_db.execute("update app.wishlist_item set auto_resolved = false, card_id = 'sv03.5-001'")
     repository.upsert_wishlist_item(clean_db, _item(auto_resolved=True))
     fila = repository.list_wishlist(clean_db)[0]
     assert fila["auto_resolved"] is False
+
+
+def test_reimportar_actualiza_precio_y_texto_de_un_item_resuelto(clean_db):
+    """Un `DO NOTHING` pasaría los tests de conteo pero dejaría precios
+    viejos; hay que probar que los valores realmente se refrescan."""
+    _sembrar_carta(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    repository.upsert_wishlist_item(
+        clean_db,
+        _item(reference_value_usd=Decimal("9.99"), raw_text="Bulbasaur 001/165 (actualizado)"),
+    )
+    filas = repository.list_wishlist(clean_db)
+    assert len(filas) == 1
+    assert filas[0]["reference_value_usd"] == Decimal("9.99")
+    assert filas[0]["raw_text"] == "Bulbasaur 001/165 (actualizado)"
+
+
+def test_reimportar_actualiza_el_precio_de_un_item_sin_resolver(clean_db):
+    clean_db.execute("insert into app.pokemon (dex_number, name) values (9, 'Blastoise')")
+    sin_resolver = dict(
+        dex_number=9,
+        card_id=None,
+        variant_label=None,
+        raw_text="Blastoise Base Set",
+        source_option="opcion_3",
+    )
+    repository.upsert_wishlist_item(clean_db, _item(**sin_resolver))
+    repository.upsert_wishlist_item(
+        clean_db, _item(**sin_resolver, reference_value_usd=Decimal("42.00"))
+    )
+    filas = repository.list_wishlist(clean_db)
+    assert len(filas) == 1
+    assert filas[0]["reference_value_usd"] == Decimal("42.00")
 
 
 def test_los_items_sin_resolver_se_guardan_con_su_texto(clean_db):
@@ -133,14 +164,15 @@ def test_la_ruta_preferida_es_la_opcion_1_y_no_otra(clean_db):
                 'https://x/166/high.png', '{}'::jsonb)
         """
     )
-    repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_2",
-                                                    card_id="sv03.5-166",
-                                                    variant_label="holo"))
+    repository.upsert_wishlist_item(
+        clean_db, _item(source_option="opcion_2", card_id="sv03.5-166", variant_label="holo")
+    )
     repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_1"))
     fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
-    assert fila["primary_image_url"] == "https://x/001/high.png" or fila[
-        "primary_card_name"
-    ] == "Bulbasaur"
+    assert (
+        fila["primary_image_url"] == "https://x/001/high.png"
+        or fila["primary_card_name"] == "Bulbasaur"
+    )
 
 
 def test_owned_count_es_cero_mientras_no_haya_captura(clean_db):
