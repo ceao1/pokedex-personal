@@ -31,8 +31,11 @@ Cada una cierra una pregunta que el PRD dejaba abierta.
 | D8 | **Wishlist editable de primera clase.** Las 4 opciones × 151 se importan como `wishlist_item`; puedes agregar y quitar libremente. | El Excel es una semilla, no una estructura fija. |
 | D9 | **Auto-resolución con heurística** para las opciones ambiguas del Excel, marcadas para corrección. | Import instantáneo sin trabajo manual previo, con la corrección disponible cuando la necesites. |
 | D10 | **Ubicación física: binder → página.** Sin bolsillo. | No hay binder físico todavía; el bolsillo se agrega cuando exista uno. |
-| D11 | **Stack: FastAPI + Next.js + Postgres + GCS.** | Decisión del dueño. |
+| D11 | **Stack: FastAPI + Next.js + Supabase** (Postgres y Storage). | Decisión del dueño. |
 | D12 | **Captura tipo "foto primero, enriquecer después"** (enfoque C). | Ver [§6](#6-flujo-de-captura). |
+| D13 | **FastAPI es el único cliente de Supabase.** Las tablas viven en el esquema `app`, no en `public`; la Data API queda sin exponer y Next.js habla solo con FastAPI. | Un solo lugar para la lógica de negocio y cero superficie de exposición accidental por PostgREST. |
+| D14 | **Respaldo en el MVP: solo el export manual.** Sin job de backup automático. | Decisión consciente del dueño. Ver el riesgo asociado en [§15](#15-riesgos-abiertos). |
+| D15 | **El cliente redimensiona la foto antes de subirla** y genera dos versiones (2048 px y 400 px). | Las subidas estándar de Supabase Storage topan en 6 MB, y comprimir en el celular es además lo que hace viable el presupuesto de 30 segundos en 4G. |
 
 ---
 
@@ -60,11 +63,30 @@ Cada entrada tiene un `variantId` propio. Consecuencia: el modelo de datos guard
 ## 4. Arquitectura
 
 **Frontend:** Next.js (App Router) como PWA instalable, móvil-first. Service worker con cola de reintentos en IndexedDB.
-**Backend:** FastAPI + Postgres. Un proceso web y un proceso worker.
-**Almacenamiento de fotos:** GCS con subida directa desde el navegador vía URL firmada. Thumbnails generados por el worker.
-**Autenticación:** usuario único, mínima.
+**Backend:** FastAPI. Un proceso web y un proceso worker.
+**Base de datos y almacenamiento:** Supabase (Postgres + Storage).
+**Autenticación:** Supabase Auth, un solo usuario.
 
-### 4.1 Puertos
+### 4.1 Postura frente a Supabase
+
+Supabase expone la base por HTTP vía PostgREST, y esa exposición es la única diferencia real respecto a un Postgres administrado por uno mismo. La postura es cerrarla:
+
+- **Las tablas de la aplicación viven en el esquema `app`, no en `public`.** La Data API solo sirve los esquemas configurados, así que un esquema fuera de esa lista no es alcanzable por HTTP. Esto elimina de raíz la clase entera de fugas por PostgREST, en lugar de depender de que cada política esté bien escrita.
+- **FastAPI es el único cliente de la base**, con una llave secreta (`sb_secret_...`). Next.js nunca recibe credenciales de Supabase; habla solo con FastAPI.
+- **RLS habilitada igualmente en todas las tablas**, como defensa en profundidad. Con un solo usuario y sin Data API no hay política que escribir más allá de negar por defecto a `anon` y `authenticated`; la llave secreta usa el rol `service_role`, que la salta.
+- **Nomenclatura de llaves:** `sb_publishable_...` para cliente y `sb_secret_...` para servidor. `anon` y `service_role` son los nombres legacy y se deprecan a fines de 2026; el código no debe usarlos.
+
+Si más adelante se abre la página pública de fase 2, el camino correcto es un esquema `api` expuesto con vistas de solo lectura, no abrir `app`.
+
+### 4.2 Storage
+
+Un bucket privado `card-photos`, con dos objetos por ejemplar: `{owned_copy_id}/front-2048.jpg` y `{owned_copy_id}/front-400.jpg` (y sus equivalentes de dorso).
+
+La subida es directa desde el navegador y sin exponer la llave secreta: FastAPI llama `createSignedUploadUrl(path)`, que devuelve `{signedUrl, token, path}`, y el cliente sube con `uploadToSignedUrl(path, token, file)`. Las lecturas se sirven con URLs firmadas de corta duración que emite FastAPI, en lote para las vistas de grilla.
+
+Las subidas estándar de Supabase Storage topan en 6 MB; el redimensionado en el cliente (D15) deja los archivos en cientos de kilobytes, muy por debajo del límite, así que no hace falta TUS resumable.
+
+### 4.3 Puertos
 
 Tres dependencias externas, cada una detrás de una interfaz con un adaptador real y un fake para tests:
 
@@ -72,11 +94,13 @@ Tres dependencias externas, cada una detrás de una interfaz con un adaptador re
 - **`RecognitionPort`** — visión LLM. `identify(image_url) -> {name, set, number, confidence, needs_review}`.
 - **`GeocodingPort`** — Google Places. `nearby(lat, lng) -> [Place]`.
 
-### 4.2 Worker
+### 4.4 Worker
 
-La cola de trabajo asíncrono vive en Postgres, en la tabla `job`, consultada en loop por el proceso worker. Cubre dos tipos de trabajo: identificar la carta y generar thumbnails. No se usa Redis ni Celery: `BackgroundTasks` de FastAPI pierde trabajos al reiniciar, y Redis es infraestructura extra para un volumen de unos pocos jobs al día. Una tabla da reintentos, historial e inspección con un `SELECT`.
+La cola de trabajo asíncrono vive en la base, en la tabla `app.job`, consultada en loop por el proceso worker. En el MVP el único tipo de trabajo es identificar la carta: los thumbnails los genera el cliente antes de subir (D15).
 
-### 4.3 Módulos
+No se usa Redis ni Celery: `BackgroundTasks` de FastAPI pierde trabajos al reiniciar, y Redis es infraestructura extra para un volumen de unos pocos jobs al día. Tampoco se usan `pg_cron` ni Edge Functions: el worker necesita llamar a la API de visión y compartir el código de dominio con FastAPI, así que es un proceso Python más y no una pieza aparte en otro runtime.
+
+### 4.5 Módulos
 
 | Módulo | Responsabilidad | Depende de |
 |---|---|---|
@@ -93,6 +117,8 @@ Cada módulo posee sus tablas y expone funciones; ningún módulo lee tablas de 
 ---
 
 ## 5. Modelo de datos
+
+Todas las tablas viven en el esquema `app` (D13), con RLS habilitada y sin políticas permisivas para `anon` ni `authenticated`.
 
 ### `card` — espejo del catálogo
 
@@ -199,9 +225,9 @@ CREATE UNIQUE INDEX ON wishlist_item (dex_number, raw_text) WHERE card_id IS NUL
 
 ### `job`
 
-Cola única del worker. `id`, `kind` (`identify` \| `thumbnail`), `owned_copy_id` FK, `status` (`pendiente` \| `corriendo` \| `ok` \| `fallo`), `attempts`, `provider` text null, `raw_response` jsonb null, `confidence` numeric null, `created_at`, `finished_at`.
+Cola del worker. `id`, `kind` (en el MVP solo `identify`), `owned_copy_id` FK, `status` (`pendiente` \| `corriendo` \| `ok` \| `fallo`), `attempts`, `provider` text null, `raw_response` jsonb null, `confidence` numeric null, `created_at`, `finished_at`.
 
-Los dos tipos de trabajo asíncrono — identificar la carta y generar el thumbnail de la foto — comparten tabla y proceso. Ambos se encolan al confirmarse la subida a GCS.
+La columna `kind` existe desde el inicio aunque haya un solo valor: fase 2 agrega el refresco de precios y el snapshot semanal sin migrar la tabla.
 
 ### Lo que no existe
 
@@ -213,16 +239,18 @@ No hay tabla de progreso del 151. Con la meta por especie es un `count(distinct 
 
 Enfoque "foto primero, enriquecer después": el reconocimiento arranca mientras el usuario todavía está tecleando, que es donde se ganan los 30 segundos.
 
-1. Tap en la cámara. El cliente genera `client_draft_id` (UUIDv4) y **guarda el blob en IndexedDB antes de tocar la red**.
-2. `POST /captures` con el `client_draft_id` → devuelve URL firmada de GCS.
-3. La foto sube **directo a GCS**, sin pasar por FastAPI. Un multipart desde móvil a través del backend es el cuello de botella clásico de este flujo.
-4. `POST /captures/{client_draft_id}/photo-uploaded` → crea el `owned_copy` en `capture_status = borrador` y encola los jobs de identificación y thumbnail. El worker empieza a trabajar.
+1. Tap en la cámara. El cliente genera `client_draft_id` (UUIDv4), redimensiona la foto a 2048 px y 400 px de lado mayor, y **guarda ambos blobs en IndexedDB antes de tocar la red**.
+2. `POST /captures` con el `client_draft_id` → FastAPI devuelve los `{signedUrl, token, path}` de las dos versiones.
+3. Las fotos suben **directo a Supabase Storage** con `uploadToSignedUrl`, sin pasar por FastAPI. Un multipart desde móvil a través del backend es el cuello de botella clásico de este flujo.
+4. `POST /captures/{client_draft_id}/photo-uploaded` → crea el `owned_copy` en `capture_status = borrador` y encola el job de identificación. El worker empieza a trabajar.
 5. En paralelo, en el celular: chips de variante → PATCH; precio y compra → PATCH; ubicación → PATCH.
 6. Guardar. Si la identificación ya volvió, la pantalla muestra la carta reconocida para que confirmes. Si no, el ejemplar queda en `identificando` y se resuelve solo.
 
 La ubicación en binder puede asignarse después, en lote, desde desktop.
 
 ### 6.1 Validación del reconocimiento
+
+El bucket es privado, así que el worker emite una URL firmada de corta duración (minutos) para la versión de 2048 px y se la pasa al servicio de visión. Ninguna foto queda accesible públicamente, ni siquiera de forma transitoria más allá de esa ventana.
 
 El worker acepta el output del LLM **solo si el número de colección y el set hacen match exacto** contra el catálogo vía `CatalogPort.find_by_set_and_number()`. Cualquier otro caso — confianza baja, `needs_review`, número que no existe, set ambiguo — va a `capture_status = en_revision`. Nunca se guardan datos dudosos como si fueran ciertos.
 
@@ -308,7 +336,8 @@ El principio: **ninguna falla puede costarte la foto**. Es lo único irrecuperab
 
 | Falla | Comportamiento |
 |---|---|
-| GCS no responde | El blob sigue en IndexedDB; el service worker reintenta con backoff |
+| Supabase Storage no responde | Los blobs siguen en IndexedDB; el service worker reintenta con backoff |
+| La URL firmada de subida expiró | FastAPI emite una nueva contra el mismo `client_draft_id`; la foto local nunca se descarta hasta confirmar la subida |
 | TCGdex caído | El espejo sirve lo cacheado; las cartas nuevas no resuelven y el ejemplar queda `en_revision` con la foto a salvo |
 | Reconocimiento falla o duda | `en_revision`. Nunca datos dudosos guardados como ciertos |
 | Worker agota reintentos (3, con backoff) | `en_revision` y el job queda en `fallo` con la respuesta cruda para inspección |
@@ -339,9 +368,14 @@ La segunda reemplaza al ">85% de identificación correcta al primer intento" del
 
 ## 12. Requisitos no funcionales
 
-**Export.** Un endpoint que vuelca toda la base a CSV (un archivo por tabla, en un zip) y a un Excel de una hoja por entidad. Disponible en cualquier momento, sin ceremonia: la data es tuya, no de la app. Este requisito es el que hace que la app no sea una jaula, así que entra al MVP y no a fase 2.
+**Export.** Un endpoint que vuelca toda la base a CSV (un archivo por tabla, en un zip) y a un Excel de una hoja por entidad. Disponible en cualquier momento, sin ceremonia: la data es tuya, no de la app. Este requisito es el que hace que la app no sea una jaula, así que entra al MVP y no a fase 2 — y con D14 es además el único respaldo que existe, lo que lo vuelve crítico y no un adorno.
 
-**Backup.** Dump diario de Postgres a GCS con retención de 30 días. Las fotos ya viven en GCS con versionado del bucket.
+**Backup.** En el MVP no hay respaldo automático (D14): el export manual es todo. Hay que saber exactamente qué implica eso, porque no es simétrico entre base y fotos:
+
+- El plan Free de Supabase **no tiene backups automáticos** de la base. En Pro son diarios con 7 días de retención.
+- **Los backups de Supabase nunca incluyen los objetos de Storage**, en ningún plan. La base guarda solo los metadatos de los archivos.
+
+Es decir: incluso pagando Pro, las fotos quedarían fuera del respaldo. Corre el export a mano con frecuencia y descarga las fotos por tu cuenta hasta que esto se automatice. Ver [§15](#15-riesgos-abiertos).
 
 **PWA.** Instalable, con manifest e íconos. El service worker cachea el shell de la app y la grilla del dex para que el checklist se pueda consultar sin señal — el caso "estoy en la tienda decidiendo si ya tengo este Pokémon" no puede depender de la red.
 
@@ -362,18 +396,25 @@ La segunda reemplaza al ">85% de identificación correcta al primer intento" del
 | §6.3 API de precios como parte del MVP | Eliminada. TCGdex ya trae precios (D5, D6) |
 | §9 ">85% de identificación al primer intento" | Reemplazada por tasa de corrección (§11) |
 | §5.2 identificación dentro del flujo | Asíncrona, con subida de foto temprana (D4, D12) |
+| §7 fotos en GCS | Supabase Storage, bucket privado, subida firmada directa (D11) |
+| §7 "backup automático" | Fuera del MVP; solo el export manual (D14) |
+| §7 "autenticación mínima de usuario único" | Supabase Auth con un solo usuario |
 
 ---
 
 ## 14. Estrategia de tests
 
-TDD, con fakes para los tres puertos. La prioridad no es cobertura sino los tres lugares donde un bug es caro y silencioso:
+TDD, con fakes para los tres puertos. La prioridad no es cobertura sino los cuatro lugares donde un bug es caro y silencioso:
 
 1. **Prorrateo** — los tres métodos, bulk $0, redondeo con residuo, recálculo tras cambio de método. Es aritmética pura y un centavo descuadrado envenena el P&L completo.
 2. **Idempotencia** — el mismo `client_draft_id` dos veces produce un solo ejemplar; reimportar el Excel dos veces no duplica wishlist ni pisa correcciones manuales.
 3. **Contrato con TCGdex** — un test que falla si el payload deja de traer `pricing` o `variants_detailed`. Todo el modelo de precios descansa en esa forma y es una dependencia externa que puede cambiar sin avisar.
 
+4. **Cierre de la Data API** — un test que intenta leer `app.owned_copy` con la llave publicable y exige que falle. D13 apuesta todo a que ese esquema no está expuesto; si alguien lo agrega a la lista de esquemas de la Data API por descuido, la colección entera queda legible desde el bundle de Next.js y nada más lo notaría.
+
 También: validación del reconocimiento (que un número inexistente vaya a `en_revision`), heurística del import contra casos reales del Excel, y un E2E del flujo de captura.
+
+Antes de cada migración se corre `supabase db advisors` y se resuelven los hallazgos de seguridad y rendimiento.
 
 El piloto de 30 fotos reales (tienda, casa, con sleeve) es criterio de aceptación manual del reconocimiento, no un test automatizado.
 
@@ -388,3 +429,5 @@ El piloto de 30 fotos reales (tienda, casa, con sleeve) es criterio de aceptaci�
 | Sin Background Sync en iOS | Aceptado. La cola sincroniza con la PWA abierta |
 | La heurística del import vincula cartas equivocadas en silencio | `auto_resolved = true` las marca todas; la UI las lista para revisión en bloque |
 | Cobertura de TCGdex en vintage | Verificable temprano: el import del Excel resuelve las Opciones 3 y 4 y reporta cuántas quedaron sin `card_id` |
+| **Pérdida total de las fotos** — sin respaldo automático (D14) y con los objetos de Storage excluidos de los backups de Supabase en todos los planes | **Aceptado conscientemente en el MVP.** Mitigación parcial: correr el export a mano con frecuencia. Es el riesgo más grave del diseño, porque la foto propia es lo único que no se puede volver a generar: el catálogo se reconstruye desde TCGdex y los costos desde el export, pero la foto de la carta en tu mano no. Automatizar la copia de fotos debería ser lo primero de fase 2 |
+| Base sin respaldo en plan Free (D14) | El export a CSV/Excel es la única red. Subir a Pro da backups diarios de la base, pero no de las fotos |
