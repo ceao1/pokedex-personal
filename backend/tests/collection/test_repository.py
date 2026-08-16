@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from pokedex.collection import repository
@@ -153,6 +154,45 @@ def test_los_ejemplares_traen_lo_necesario_para_dibujarlos(clean_db):
         assert campo in ejemplar, f"falta {campo}"
 
 
+def test_listar_por_dex_muestra_el_costo_asignado_por_una_compra_no_el_precio_suelto(clean_db):
+    """El costo que muestra la ficha es el que decide `app.owned_copy_costo`
+    (task de compras), no la columna `purchase_price_usd` cruda: un ejemplar
+    que salió de un reparto tiene que mostrar lo que el reparto le asignó."""
+    from decimal import Decimal
+    from uuid import uuid4
+
+    _sembrar_pokemon_y_carta(clean_db, 4, "sv03.5-004", "Charmander", "004")
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, card_id, purchase_price_usd, assigned_cost_usd)
+        values (%s, 'sv03.5-004', 9.99, 3.33)
+        """,
+        (uuid4(),),
+    )
+    ejemplar = repository.listar_por_dex(clean_db, 4)[0]
+    assert ejemplar["purchase_price_usd"] == Decimal("3.33")
+
+
+def test_obtener_expone_purchase_id_assigned_cost_e_is_bulk(clean_db):
+    draft = UUID("aaaaaaaa-0000-0000-0000-00000000000a")
+    compra = clean_db.execute(
+        "insert into app.purchase (source_type, total_usd) values ('lote', 10.00) returning id"
+    ).fetchone()
+    repository.crear_borrador(clean_db, draft)
+    clean_db.execute(
+        """
+        update app.owned_copy
+        set purchase_id = %(purchase_id)s, assigned_cost_usd = 4.50, is_bulk = true
+        where client_draft_id = %(draft)s
+        """,
+        {"purchase_id": compra["id"], "draft": draft},
+    )
+    fila = repository.obtener(clean_db, draft)
+    assert fila.purchase_id == compra["id"]
+    assert fila.assigned_cost_usd == Decimal("4.50")
+    assert fila.is_bulk is True
+
+
 # --- listar_fuera_del_151: el agujero negro de las cartas que no son de los 151 ---
 
 
@@ -275,6 +315,23 @@ def test_listar_fuera_del_151_trae_lo_necesario_para_dibujarla(clean_db):
     assert ejemplar["card_name"] == "Chikorita"
     assert ejemplar["dex_number"] == 152
     assert ejemplar["image_url"] == "https://x/me02.5-008/high.png"
+
+
+def test_listar_fuera_del_151_muestra_el_costo_asignado_por_una_compra(clean_db):
+    from uuid import uuid4
+
+    _sembrar_carta_de_otra_generacion(clean_db)
+    draft = uuid4()
+    clean_db.execute(
+        """
+        insert into app.owned_copy
+          (client_draft_id, card_id, purchase_price_usd, assigned_cost_usd)
+        values (%s, 'me02.5-008', 3.00, 1.25)
+        """,
+        (draft,),
+    )
+    ejemplar = repository.listar_fuera_del_151(clean_db)[0]
+    assert ejemplar["purchase_price_usd"] == Decimal("1.25")
 
 
 def test_listar_fuera_del_151_sin_carta_no_trae_arte_del_catalogo(clean_db):

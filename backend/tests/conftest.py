@@ -48,11 +48,15 @@ def db_conn():
         conn.rollback()
 
 
+_TRUNCATE = (
+    "truncate app.card, app.pokemon, app.wishlist_item, app.owned_copy, app.binder, "
+    "app.purchase cascade"
+)
+
+
 @pytest.fixture()
 def clean_db(db_conn):
-    db_conn.execute(
-        "truncate app.card, app.pokemon, app.wishlist_item, app.owned_copy, app.binder cascade"
-    )
+    db_conn.execute(_TRUNCATE)
     db_conn.commit()
     yield db_conn
     # Trunca también al final: si no, lo que el último test dejó commiteado
@@ -65,7 +69,5 @@ def clean_db(db_conn):
     # truncate de abajo fallaría con `InFailedSqlTransaction`: se hace
     # rollback primero, que es un no-op si la transacción ya estaba limpia.
     db_conn.rollback()
-    db_conn.execute(
-        "truncate app.card, app.pokemon, app.wishlist_item, app.owned_copy, app.binder cascade"
-    )
+    db_conn.execute(_TRUNCATE)
     db_conn.commit()

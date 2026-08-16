@@ -16,7 +16,7 @@ _COLUMNS = """
     id, client_draft_id, card_id, variant_id, variant_label, condition,
     photo_front_url, photo_thumb_url, purchase_price_usd, source_type,
     binder_id, page, capture_status, lifecycle_status, notes, dex_number,
-    created_at
+    purchase_id, assigned_cost_usd, is_bulk, created_at
 """
 
 _INSERT_BORRADOR = """
@@ -59,10 +59,20 @@ order by created_at
 # que la ficha se dibuje sin una segunda consulta -- todo `null` si no hay
 # carta todavía. Excluye las vendidas: una carta que ya no está en el
 # binder no es un ejemplar que el dueño "tiene".
+#
+# `purchase_price_usd` acá es el costo EFECTIVO -- `app.owned_copy_costo(o)`,
+# `coalesce(assigned_cost_usd, purchase_price_usd)`, el único sitio donde se
+# decide (ver la migración de `app.purchase`) -- no la columna cruda. Esta
+# vista es de solo lectura (nadie hace `UPDATE` contra estas filas), así que
+# alias el nombre no mezcla lectura con escritura como sí lo haría en
+# `_COLUMNS`/`OwnedCopy` (ver el comentario de `purchase_price_usd` en
+# `models.py`): sin esto, un ejemplar que salió de una compra mostraría costo
+# nulo en la ficha aunque el reparto ya le haya asignado uno.
 _LISTAR_POR_DEX = """
 select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id,
        c.image_url, c.rarity, o.variant_label, o.condition,
-       o.purchase_price_usd, o.photo_front_url, o.photo_thumb_url,
+       app.owned_copy_costo(o) as purchase_price_usd,
+       o.photo_front_url, o.photo_thumb_url,
        o.notes, o.created_at
 from app.owned_copy o
 left join app.card c on c.id = o.card_id
@@ -159,10 +169,13 @@ def listar_por_dex(conn: Connection, dex_number: int) -> list[dict]:
 # todavía (capturado con foto y precio, sin resolver, y sin `dex_number`
 # propio tampoco) también queda fuera del proyecto y tiene que aparecer, y
 # un `join` liso lo excluiría.
+# `purchase_price_usd` acá también es el costo efectivo, no la columna cruda
+# -- mismo motivo que en `_LISTAR_POR_DEX`, arriba.
 _LISTAR_FUERA_DEL_151 = """
 select o.id, o.card_id, c.name as card_name, c.set_name, c.local_id,
        coalesce(c.dex_number, o.dex_number) as dex_number,
-       c.image_url, o.variant_label, o.condition, o.purchase_price_usd,
+       c.image_url, o.variant_label, o.condition,
+       app.owned_copy_costo(o) as purchase_price_usd,
        o.photo_front_url, o.photo_thumb_url, o.notes, o.created_at
 from app.owned_copy o
 left join app.card c on c.id = o.card_id

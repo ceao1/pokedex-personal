@@ -1,3 +1,6 @@
+from decimal import Decimal
+from uuid import uuid4
+
 import psycopg
 import pytest
 
@@ -37,8 +40,103 @@ def test_las_tablas_de_coleccion_existen_con_rls(db_conn):
     por_nombre = {r["relname"]: r["relrowsecurity"] for r in rows}
     assert "owned_copy" in por_nombre
     assert "binder" in por_nombre
+    assert "purchase" in por_nombre
     sin_rls = [n for n, rls in por_nombre.items() if not rls]
     assert sin_rls == [], f"tablas de app sin RLS: {sin_rls}"
+
+
+# --- app.purchase: la compra es el contenedor (task 1) --------------------
+
+
+def test_una_compra_minima_se_guarda(clean_db):
+    fila = clean_db.execute(
+        """
+        insert into app.purchase (source_type, total_usd)
+        values ('sobre', 15.00)
+        returning id, allocation_method, total_usd
+        """
+    ).fetchone()
+    assert fila["allocation_method"] == "market_value", "el método por defecto es market_value"
+    assert fila["total_usd"] == 15.00
+
+
+def test_el_total_de_una_compra_no_admite_negativos(clean_db):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        clean_db.execute("insert into app.purchase (source_type, total_usd) values ('lote', -1.00)")
+
+
+def test_un_source_type_invalido_se_rechaza(clean_db):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        clean_db.execute(
+            "insert into app.purchase (source_type, total_usd) values ('inventado', 1.00)"
+        )
+
+
+def test_un_allocation_method_invalido_se_rechaza(clean_db):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        clean_db.execute(
+            """
+            insert into app.purchase (source_type, total_usd, allocation_method)
+            values ('lote', 1.00, 'inventado')
+            """
+        )
+
+
+def test_borrar_una_compra_deja_las_cartas_vivas_con_purchase_id_nulo(clean_db):
+    """`on delete set null`, no `cascade`: una compra registrada por error no
+    puede llevarse por delante ejemplares que existen físicamente en el
+    binder. Se usa `delete` (no `truncate`) porque un `truncate ... cascade`
+    no dispara `on delete set null` -- pasaría este test por el motivo
+    equivocado."""
+    compra = clean_db.execute(
+        "insert into app.purchase (source_type, total_usd) values ('sobre', 5.00) returning id"
+    ).fetchone()
+    draft = uuid4()
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, purchase_id) values (%s, %s)",
+        (draft, compra["id"]),
+    )
+
+    clean_db.execute("delete from app.purchase where id = %s", (compra["id"],))
+
+    fila = clean_db.execute(
+        "select purchase_id from app.owned_copy where client_draft_id = %s", (draft,)
+    ).fetchone()
+    assert fila is not None, "el ejemplar sigue existiendo"
+    assert fila["purchase_id"] is None
+
+
+def test_un_ejemplar_sin_compra_sigue_devolviendo_su_precio_suelto(clean_db):
+    """El costo efectivo se lee con `app.owned_copy_costo`, el único sitio
+    donde se decide `coalesce(assigned_cost_usd, purchase_price_usd)`. Un
+    ejemplar que nunca colgó de una compra no tiene `assigned_cost_usd`, así
+    que su costo sigue siendo el precio suelto de siempre."""
+    draft = uuid4()
+    clean_db.execute(
+        "insert into app.owned_copy (client_draft_id, purchase_price_usd) values (%s, 9.99)",
+        (draft,),
+    )
+    fila = clean_db.execute(
+        "select app.owned_copy_costo(o) as costo from app.owned_copy o where client_draft_id = %s",
+        (draft,),
+    ).fetchone()
+    assert fila["costo"] == Decimal("9.99")
+
+
+def test_el_costo_asignado_por_una_compra_manda_sobre_el_precio_suelto(clean_db):
+    draft = uuid4()
+    clean_db.execute(
+        """
+        insert into app.owned_copy (client_draft_id, purchase_price_usd, assigned_cost_usd)
+        values (%s, 9.99, 3.33)
+        """,
+        (draft,),
+    )
+    fila = clean_db.execute(
+        "select app.owned_copy_costo(o) as costo from app.owned_copy o where client_draft_id = %s",
+        (draft,),
+    ).fetchone()
+    assert fila["costo"] == Decimal("3.33")
 
 
 def test_un_ejemplar_minimo_se_guarda(clean_db):

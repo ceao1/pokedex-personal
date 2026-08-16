@@ -38,6 +38,16 @@ class OwnedCopy(BaseModel):
     condition: str | None
     photo_front_url: str | None
     photo_thumb_url: str | None
+    # El precio suelto histórico -- lo que un ejemplar sin compra sigue
+    # usando. Nunca se lee directo para "cuánto costó esto": esa pregunta la
+    # responde `app.owned_copy_costo` (`coalesce(assigned_cost_usd,
+    # purchase_price_usd)`, ver la migración de `app.purchase`), el único
+    # sitio donde se decide -- `listar_por_dex`/`listar_fuera_del_151`, en
+    # este mismo módulo, lo exponen ya resuelto bajo `purchase_price_usd`
+    # para las vistas de lectura. Este campo sigue siendo el valor crudo de
+    # la columna porque `OwnedCopyIn`/PATCH escriben ahí directo, y mezclar
+    # lectura resuelta con escritura cruda en el mismo nombre sería la
+    # mentira que la task de compras vino a evitar.
     purchase_price_usd: Decimal | None
     source_type: str | None
     binder_id: int | None
@@ -46,4 +56,15 @@ class OwnedCopy(BaseModel):
     lifecycle_status: str
     notes: str | None
     dex_number: int | None
+    # La compra de la que cuelga este ejemplar, si la hay -- `None` para todo
+    # lo capturado antes de la task de compras, o para lo capturado a mano
+    # fuera de una.
+    purchase_id: int | None
+    # Lo que esa compra le asignó a este ejemplar puntual al repartir su
+    # costo (`purchases/allocation.py`). `None` hasta que se reparte, o
+    # siempre `None` si el ejemplar no cuelga de una compra.
+    assigned_cost_usd: Decimal | None
+    # Relleno de bulk: sin carta, sin foto, a costo cero (ver
+    # `purchases/repository.py`). Excluido a propósito del reparto.
+    is_bulk: bool
     created_at: datetime
