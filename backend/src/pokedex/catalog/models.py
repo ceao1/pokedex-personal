@@ -26,6 +26,12 @@ class Card(BaseModel):
     rarity: str | None = None
     image_url: str | None = None
     dex_number: int | None = None
+    # True cuando `dex_number` no vino de TCGdex (dexId ausente, como en las
+    # cartas "Erika's X" de sets narrativos) sino que se infirió por
+    # identificación de foto y se validó contra app.pokemon (ver
+    # `recognition/resolver.py`). El catálogo nunca lo pisa: `repository.
+    # set_inferred_dex_number` solo escribe si `dex_number` era null.
+    dex_number_inferido: bool = False
     raw: dict
     variants: list[CardVariant] = Field(default_factory=list)
 
@@ -36,3 +42,11 @@ class CardRef(BaseModel):
     id: str
     local_id: str
     name: str
+
+
+class SetRef(BaseModel):
+    """Referencia liviana a un set, tal como la devuelve `GET /sets`."""
+
+    id: str
+    name: str
+    total: int | None = None

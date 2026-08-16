@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from .models import Card, CardRef
+from .models import Card, CardRef, SetRef
 from .variants import parse_variants
 
 
@@ -57,6 +57,21 @@ class TcgdexCatalog:
         return [
             CardRef(id=c["id"], local_id=c["localId"], name=c["name"])
             for c in response.json().get("cards", [])
+        ]
+
+    async def list_sets(self) -> list[SetRef]:
+        """`GET /sets` trae los 218 sets con `{id, name, cardCount}` y
+        nombres únicos (verificado): suficiente para mapear el `set_name`
+        que devuelve el reconocimiento de foto a un id sin ambigüedad."""
+        response = await self._client.get(f"{self._base_url}/sets")
+        response.raise_for_status()
+        return [
+            SetRef(
+                id=s["id"],
+                name=s["name"],
+                total=(s.get("cardCount") or {}).get("official"),
+            )
+            for s in response.json()
         ]
 
     async def _fetch(self, url: str) -> Card | None:

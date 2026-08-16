@@ -26,6 +26,17 @@ on conflict (id) do update set
     raw            = excluded.raw,
     cached_at      = now()
 """
+# No toca `dex_number_inferido`: a propósito. Esta query es la que usa el
+# espejo perezoso de `CatalogService` (`get_card`/`find_by_set_and_number`),
+# que solo corre cuando la carta *no* existe todavía localmente -- así que
+# nunca compite con una inferencia ya guardada (ver `set_inferred_dex_number`
+# y el comentario de `dex_number_inferido` en `models.py`).
+
+_SET_INFERRED_DEX_NUMBER = """
+update app.card
+set dex_number = %(dex_number)s, dex_number_inferido = true
+where id = %(card_id)s and dex_number is null
+"""
 
 _UPSERT_VARIANT = """
 insert into app.card_variant (
@@ -48,7 +59,7 @@ on conflict (card_id, id) do update set
 
 _SELECT_CARD = """
 select id, name, set_id, set_name, local_id, set_card_count,
-       rarity, image_url, dex_number, raw
+       rarity, image_url, dex_number, dex_number_inferido, raw
 from app.card
 where {condition}
 """
@@ -117,3 +128,12 @@ def find_by_set_and_number(conn: Connection, set_id: str, local_id: str) -> Card
         "set_id = %(set_id)s and local_id = %(local_id)s",
         {"set_id": set_id, "local_id": local_id},
     )
+
+
+def set_inferred_dex_number(conn: Connection, card_id: str, dex_number: int) -> None:
+    """Solo escribe si `dex_number` seguía en null: la verdad del catálogo
+    siempre gana sobre la inferencia por foto (ver `recognition/resolver.py`
+    y el comentario de `dex_number_inferido` en `models.py`). El `where`
+    hace esto seguro incluso si dos identificaciones concurrentes de la
+    misma carta corrieran a la vez."""
+    conn.execute(_SET_INFERRED_DEX_NUMBER, {"card_id": card_id, "dex_number": dex_number})

@@ -12,7 +12,7 @@ from contextlib import AbstractContextManager
 from psycopg import Connection
 
 from . import repository
-from .models import Card, CardRef
+from .models import Card, CardRef, SetRef
 from .ports import CatalogPort
 
 # `pool.connection` cumple esta firma tal cual.
@@ -29,6 +29,10 @@ class CatalogService:
         # del espejo. Evita repetir la llamada de red por cada Pokémon de un
         # mismo set vintage.
         self._set_cache: dict[str, list[CardRef]] = {}
+        # Los 218 sets de TCGdex no cambian dentro de la vida de esta
+        # instancia; sin este cache, cada identificación por foto repetiría
+        # la llamada completa a `GET /sets` (ver `recognition.resolver`).
+        self._sets_cache: list[SetRef] | None = None
 
     async def get_card(self, card_id: str) -> Card | None:
         with self._conn_factory() as conn:
@@ -48,6 +52,11 @@ class CatalogService:
         if set_id not in self._set_cache:
             self._set_cache[set_id] = await self._catalog.list_set_cards(set_id)
         return self._set_cache[set_id]
+
+    async def list_sets(self) -> list[SetRef]:
+        if self._sets_cache is None:
+            self._sets_cache = await self._catalog.list_sets()
+        return self._sets_cache
 
     async def find_by_set_and_number(self, set_id: str, local_id: str) -> Card | None:
         with self._conn_factory() as conn:
