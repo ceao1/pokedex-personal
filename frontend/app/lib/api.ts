@@ -95,9 +95,9 @@ async function apiGetLocal<T>(path: string): Promise<T> {
 /** `crypto.randomUUID` exige contexto seguro (HTTPS o `localhost`); el
  * celular entra por la IP de la red local sin TLS, así que ahí no existe
  * y hay que generar el UUID a mano con `getRandomValues`, que sí es
- * universal. Verificado contra el navegador real: en `IP-DE-RED-LOCAL`
- * `crypto.randomUUID` es `undefined` y esto rompía toda captura antes de
- * la primera llamada de red. */
+ * universal. Verificado contra el navegador real: servido por IP de red
+ * local sin TLS, `crypto.randomUUID` es `undefined` y esto rompía toda
+ * captura antes de la primera llamada de red. */
 export function nuevoClientDraftId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
