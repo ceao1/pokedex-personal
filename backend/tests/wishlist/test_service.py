@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from pokedex.catalog.models import Card
+from pokedex.catalog.models import Card, CardRef
 from pokedex.catalog.service import CatalogService
 from pokedex.wishlist import repository
 from pokedex.wishlist.excel import SHEET_DEX, SHEET_GALLERY
@@ -51,6 +51,51 @@ class FakeCatalogPortConNumeros:
 
     async def list_set_cards(self, set_id: str):
         return []
+
+
+class FakeCatalogPortVintage:
+    """Puerto falso que resuelve un Pokémon vintage vía `list_set_cards`
+    (opción 3), sin tocar la red. A diferencia de `FakeCatalogService`, sí
+    implementa `get_card` -- lo necesita el fix de este round, que debe
+    espejar la carta antes de insertarla como wishlist_item."""
+
+    def __init__(self):
+        self._card = Card(
+            id="base1-4",
+            name="Ditto",
+            set_id="base1",
+            set_name="Base Set",
+            local_id="4",
+            raw={},
+        )
+
+    async def get_card(self, card_id: str):
+        return self._card if card_id == "base1-4" else None
+
+    async def find_by_set_and_number(self, set_id: str, local_id: str):
+        return None
+
+    async def list_set_cards(self, set_id: str):
+        if set_id != "base1":
+            return []
+        return [CardRef(id="base1-4", local_id="4", name="Ditto")]
+
+
+def _build_vintage_workbook(tmp_path: Path) -> Path:
+    """Un Pokémon cuya única opción es la 3 (vintage), resuelta por
+    `list_set_cards` -- el camino que no espeja nada por sí solo."""
+    workbook = Workbook()
+    dex_sheet = workbook.active
+    dex_sheet.title = SHEET_DEX
+    dex_sheet["A4"] = 132
+    dex_sheet["B4"] = "Ditto"
+    dex_sheet["M4"] = "Ditto Base Set"
+    dex_sheet["N4"] = "5.00"
+    workbook.create_sheet(SHEET_GALLERY)
+
+    path = tmp_path / "vintage.xlsx"
+    workbook.save(path)
+    return path
 
 
 def _build_mini_workbook(tmp_path: Path) -> Path:
@@ -121,6 +166,31 @@ async def test_reimportar_es_idempotente(conn_factory, clean_db):
     assert len(repository.list_wishlist(clean_db)) == despues_del_primero
     assert segundo.items_creados == 0
     assert primero.items_creados > 0
+
+
+async def test_una_carta_vintage_se_espeja_antes_del_upsert(conn_factory, clean_db, tmp_path):
+    """Bug real, encontrado corriendo el import de verdad: la opción 3
+    (vintage) resuelve por `list_set_cards`, que devuelve un `CardRef`
+    liviano (id, localId, name) y nunca espeja nada en `app.card` -- a
+    diferencia de las opciones 1 y 2, que resuelven por
+    `find_by_set_and_number` y `CatalogService` las espeja como efecto
+    secundario. Sin espejar la carta antes del upsert, el FK de
+    `wishlist_item.card_id` la rechaza con `ForeignKeyViolation` la primera
+    vez que aparece una carta vintage nueva -- no seedeada aquí a propósito,
+    para reproducir el fallo real."""
+    path = _build_vintage_workbook(tmp_path)
+    catalog = CatalogService(FakeCatalogPortVintage(), conn_factory)
+    service = ImportService(catalog, conn_factory)
+
+    resumen = await service.import_workbook(path)
+
+    assert resumen.sin_resolver == 0
+    filas = repository.list_wishlist(clean_db, dex_number=132)
+    assert filas[0]["card_id"] == "base1-4"
+    espejada = clean_db.execute(
+        "select count(*) as n from app.card where id = 'base1-4'"
+    ).fetchone()["n"]
+    assert espejada == 1
 
 
 async def test_la_galeria_marca_favoritos_en_vez_de_duplicar(conn_factory, clean_db, tmp_path):

@@ -35,6 +35,17 @@ class ImportService:
         rows, gallery = parse_workbook(path)
         resolver = OptionResolver(self._catalog)
         summary = ImportSummary()
+        # Opciones 1 y 2 resuelven por `find_by_set_and_number`, que
+        # `CatalogService` espeja en `app.card` como efecto secundario. La
+        # opción 3 (vintage) resuelve por `list_set_cards`, que devuelve un
+        # `CardRef` liviano (id, localId, name) y nunca espeja nada: sin este
+        # seguimiento, el FK de `wishlist_item.card_id` rechaza la primera
+        # carta vintage que aparece con `ForeignKeyViolation`. Se registra
+        # qué card_id ya se garantizó en esta corrida para no repetir la
+        # llamada de más -- opciones 1 y 2 frecuentemente apuntan a la misma
+        # carta, y el propio espejo local ya dedupe, pero este set lo
+        # mantiene rápido sin depender de eso.
+        cartas_vistas: set[str] = set()
 
         with self._conn_factory() as conn:
             antes = self._contar_items(conn)
@@ -46,6 +57,8 @@ class ImportService:
                 for resolved in await resolver.resolve_row(row):
                     if resolved.card_id is None:
                         summary.sin_resolver += 1
+                    else:
+                        await self._asegurar_espejo(resolved.card_id, cartas_vistas)
                     repository.upsert_wishlist_item(
                         conn,
                         WishlistItemIn(
@@ -60,7 +73,7 @@ class ImportService:
                     )
 
             for gallery_row in gallery:
-                await self._marcar_favorito(conn, resolver, gallery_row)
+                await self._marcar_favorito(conn, resolver, gallery_row, cartas_vistas)
 
             conn.commit()
             despues = self._contar_items(conn)
@@ -70,7 +83,11 @@ class ImportService:
         return summary
 
     async def _marcar_favorito(
-        self, conn: Connection, resolver: OptionResolver, gallery_row: GalleryRow
+        self,
+        conn: Connection,
+        resolver: OptionResolver,
+        gallery_row: GalleryRow,
+        cartas_vistas: set[str],
     ) -> None:
         """La galería no crea items nuevos si la carta ya está como opción:
         le pone la marca de favorito encima del item ya existente.
@@ -84,6 +101,8 @@ class ImportService:
         filas) termina como una fila sin resolver marcada como favorita.
         """
         resolved = await resolver.resolve_gallery_row(gallery_row)
+        if resolved.card_id is not None:
+            await self._asegurar_espejo(resolved.card_id, cartas_vistas)
         repository.upsert_wishlist_item(
             conn,
             WishlistItemIn(
@@ -96,6 +115,16 @@ class ImportService:
                 reference_value_usd=gallery_row.reference_value_usd,
             ),
         )
+
+    async def _asegurar_espejo(self, card_id: str, cartas_vistas: set[str]) -> None:
+        """`CatalogService.get_card` devuelve la copia local si ya existe y,
+        si no, la trae de TCGdex y la espeja -- idempotente y barato después
+        del primer hit. `cartas_vistas` evita repetir la llamada para la
+        misma carta dentro de esta corrida."""
+        if card_id in cartas_vistas:
+            return
+        await self._catalog.get_card(card_id)
+        cartas_vistas.add(card_id)
 
     @staticmethod
     def _contar_items(conn: Connection) -> int:
