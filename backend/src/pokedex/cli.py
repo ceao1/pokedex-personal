@@ -57,7 +57,7 @@ async def _import_excel(path: str) -> int:
         print(
             "\nImport parcial: el catálogo (TCGdex) no respondió para "
             f"{summary.catalogo_inalcanzable} opciones. No se guardó nada a medias "
-            "-- esas opciones se saltaron por completo. Volvé a correr este mismo "
+            "-- esas opciones se saltaron por completo. Vuelve a correr este mismo "
             "comando cuando el catálogo esté disponible para completarlas; lo ya "
             "resuelto no se toca."
         )

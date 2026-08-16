@@ -95,7 +95,7 @@ NOMBRES_151: tuple[str, ...] = (
     "Slowbro",
     "Magnemite",
     "Magneton",
-    "Farfetchd",
+    "Farfetch'd",
     "Doduo",
     "Dodrio",
     "Seel",

@@ -18,6 +18,10 @@ ANCLAS = {
     29: "Nidoran♀",
     32: "Nidoran♂",
     44: "Gloom",
+    # Farfetch'd lleva apóstrofo en las cartas. PokeAPI lo quita, y esa
+    # diferencia se coló en la primera versión de la lista: la detectó
+    # comparar contra los nombres reales del set sv03.5, no este test.
+    83: "Farfetch'd",
     122: "Mr. Mime",
     150: "Mewtwo",
     151: "Mew",
