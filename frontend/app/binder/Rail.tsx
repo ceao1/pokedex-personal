@@ -3,10 +3,10 @@ import styles from "./Rail.module.css";
 type Props = {
   total: number;
   conseguidos: number;
-  invertidoUsd: number;
+  costoRestanteUsd: number;
 };
 
-export function Rail({ total, conseguidos, invertidoUsd }: Props) {
+export function Rail({ total, conseguidos, costoRestanteUsd }: Props) {
   const porcentaje = total === 0 ? 0 : Math.round((conseguidos / total) * 100);
 
   return (
@@ -34,10 +34,11 @@ export function Rail({ total, conseguidos, invertidoUsd }: Props) {
       </section>
 
       <section className={styles.money}>
-        <p className={styles.moneyLabel}>Invertido</p>
+        <p className={styles.moneyLabel}>Completar el 151</p>
         <p className={styles.moneyValue}>
-          ${invertidoUsd.toFixed(2)} <span className={styles.usd}>USD</span>
+          ${costoRestanteUsd.toFixed(2)} <span className={styles.usd}>USD</span>
         </p>
+        <p className={styles.hint}>Sumando la ruta más económica de cada uno.</p>
       </section>
     </aside>
   );

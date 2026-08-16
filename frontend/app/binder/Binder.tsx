@@ -16,7 +16,10 @@ export function Binder({ pokedex }: { pokedex: Pokemon[] }) {
     return pokedex[pagina * POR_PAGINA + i] ?? null;
   });
 
-  const conseguidos = pokedex.filter((p) => p.wishlist_count > 0).length;
+  const conseguidos = pokedex.filter((p) => p.owned_count > 0).length;
+  const costoRestante = pokedex
+    .filter((p) => p.owned_count === 0)
+    .reduce((total, p) => total + (p.primary_price_usd ?? 0), 0);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -29,7 +32,7 @@ export function Binder({ pokedex }: { pokedex: Pokemon[] }) {
 
   return (
     <div className={styles.shell}>
-      <Rail total={pokedex.length} conseguidos={conseguidos} invertidoUsd={0} />
+      <Rail total={pokedex.length} conseguidos={conseguidos} costoRestanteUsd={costoRestante} />
 
       <main className={styles.spread}>
         <div className={styles.grid} key={pagina}>

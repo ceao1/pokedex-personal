@@ -6,36 +6,46 @@ type Props = {
   index: number;
 };
 
-const ARTWORK = (dex: number) =>
-  `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${dex}.png`;
-
 export function Pocket({ pokemon, index }: Props) {
   if (pokemon === null) {
     return <div className={`${styles.pocket} ${styles.blank}`} aria-hidden="true" />;
   }
 
-  const conseguido = pokemon.wishlist_count > 0;
+  const conseguido = pokemon.owned_count > 0;
+  const dex = String(pokemon.dex_number).padStart(3, "0");
 
   return (
     <article
-      className={styles.pocket}
+      className={`${styles.pocket} ${conseguido ? styles.owned : styles.hunting}`}
       style={{ "--delay": `${index * 20}ms` } as React.CSSProperties}
+      aria-label={
+        conseguido
+          ? `${pokemon.name}, número ${dex}, en el binder`
+          : `${pokemon.name}, número ${dex}, todavía no lo tienes`
+      }
     >
-      <span className={styles.dex}>{String(pokemon.dex_number).padStart(3, "0")}</span>
-
-      <div className={styles.art}>
-        <img src={ARTWORK(pokemon.dex_number)} alt="" loading="lazy" />
-      </div>
-
-      <div className={styles.plate}>
-        <h2 className={styles.name}>{pokemon.name}</h2>
-        <span
-          className={conseguido ? styles.lightOn : styles.lightOff}
-          aria-label={conseguido ? "con rutas de caza" : "sin rutas"}
+      {pokemon.primary_image_url ? (
+        <img
+          className={styles.card}
+          src={pokemon.primary_image_url}
+          alt=""
+          loading="lazy"
         />
-      </div>
+      ) : (
+        <div className={styles.noCard}>
+          <span>Sin carta asignada</span>
+        </div>
+      )}
 
       <span className={styles.sheen} aria-hidden="true" />
+
+      <footer className={styles.plate}>
+        <span className={styles.dex}>{dex}</span>
+        <span className={styles.name}>{pokemon.name}</span>
+        {pokemon.primary_price_usd !== null && (
+          <span className={styles.price}>${pokemon.primary_price_usd.toFixed(2)}</span>
+        )}
+      </footer>
     </article>
   );
 }

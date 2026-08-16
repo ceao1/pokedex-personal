@@ -65,6 +65,12 @@
   background: linear-gradient(90deg, var(--shell), var(--lens));
 }
 
+.money {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
 .hint,
 .moneyLabel {
   font-size: var(--step-0);

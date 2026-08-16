@@ -3,6 +3,10 @@ export type Pokemon = {
   name: string;
   wishlist_count: number;
   sin_resolver: number;
+  owned_count: number;
+  primary_image_url: string | null;
+  primary_card_name: string | null;
+  primary_price_usd: number | null;
 };
 
 export type WishlistItem = {
