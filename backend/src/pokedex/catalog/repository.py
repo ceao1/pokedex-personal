@@ -35,7 +35,7 @@ values (
     %(id)s, %(card_id)s, %(type)s, %(subtype)s, %(stamp)s, %(foil)s, %(size)s,
     %(price_usd)s, %(price_captured_at)s, %(raw)s
 )
-on conflict (id) do update set
+on conflict (card_id, id) do update set
     type              = excluded.type,
     subtype           = excluded.subtype,
     stamp             = excluded.stamp,

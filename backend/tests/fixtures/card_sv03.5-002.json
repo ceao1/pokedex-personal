@@ -1,0 +1,198 @@
+{
+  "category": "Pokemon",
+  "id": "sv03.5-002",
+  "illustrator": "Yuu Nishida",
+  "image": "https://assets.tcgdex.net/en/sv/sv03.5/002",
+  "localId": "002",
+  "name": "Ivysaur",
+  "rarity": "Uncommon",
+  "set": {
+    "cardCount": {
+      "official": 165,
+      "total": 207
+    },
+    "id": "sv03.5",
+    "logo": "https://assets.tcgdex.net/en/sv/sv03.5/logo",
+    "name": "151",
+    "symbol": "https://assets.tcgdex.net/univ/sv/sv03.5/symbol"
+  },
+  "variants": {
+    "firstEdition": false,
+    "holo": false,
+    "normal": true,
+    "reverse": true,
+    "wPromo": false
+  },
+  "variants_detailed": [
+    {
+      "type": "normal",
+      "size": "standard",
+      "variantId": "endfynwn4n10gzq",
+      "pricing": {
+        "cardmarket": {
+          "updated": "2026-08-16T03:12:26.166Z",
+          "unit": "EUR",
+          "idProduct": 733597,
+          "avg": 0.14,
+          "low": 0.02,
+          "trend": 0.15,
+          "avg1": 0.16,
+          "avg7": 0.17,
+          "avg30": 0.14,
+          "avg-holo": 0.37,
+          "low-holo": 0.05,
+          "trend-holo": 0.36,
+          "avg1-holo": 0.28,
+          "avg7-holo": 0.37,
+          "avg30-holo": 0.37
+        },
+        "tcgplayer": {
+          "unit": "USD",
+          "updated": "2026-08-16T03:12:33.235Z",
+          "normal": {
+            "productId": 502553,
+            "lowPrice": 0.03,
+            "midPrice": 0.25,
+            "highPrice": 1000,
+            "marketPrice": 0.28,
+            "directLowPrice": null
+          },
+          "reverse-holofoil": {
+            "productId": 502553,
+            "lowPrice": 0.1,
+            "midPrice": 0.42,
+            "highPrice": 19.28,
+            "marketPrice": 0.42,
+            "directLowPrice": 0.41
+          }
+        }
+      }
+    },
+    {
+      "type": "reverse",
+      "size": "standard",
+      "variantId": "cm4kqul3x1bwlz1f",
+      "pricing": {
+        "cardmarket": {
+          "updated": "2026-08-16T03:12:26.166Z",
+          "unit": "EUR",
+          "idProduct": 733597,
+          "avg": 0.14,
+          "low": 0.02,
+          "trend": 0.15,
+          "avg1": 0.16,
+          "avg7": 0.17,
+          "avg30": 0.14,
+          "avg-holo": 0.37,
+          "low-holo": 0.05,
+          "trend-holo": 0.36,
+          "avg1-holo": 0.28,
+          "avg7-holo": 0.37,
+          "avg30-holo": 0.37
+        },
+        "tcgplayer": {
+          "unit": "USD",
+          "updated": "2026-08-16T03:12:33.235Z",
+          "normal": {
+            "productId": 502553,
+            "lowPrice": 0.03,
+            "midPrice": 0.25,
+            "highPrice": 1000,
+            "marketPrice": 0.28,
+            "directLowPrice": null
+          },
+          "reverse-holofoil": {
+            "productId": 502553,
+            "lowPrice": 0.1,
+            "midPrice": 0.42,
+            "highPrice": 19.28,
+            "marketPrice": 0.42,
+            "directLowPrice": 0.41
+          }
+        }
+      }
+    }
+  ],
+  "dexId": [
+    2
+  ],
+  "hp": 100,
+  "types": [
+    "Grass"
+  ],
+  "evolveFrom": "Bulbasaur",
+  "description": "Exposure to sunlight adds to its strength. Sunlight also makes the bud on its back grow larger.",
+  "stage": "Stage1",
+  "attacks": [
+    {
+      "cost": [
+        "Grass",
+        "Colorless"
+      ],
+      "name": "Leech Seed",
+      "effect": "Heal 20 damage from this Pok\u00e9mon.",
+      "damage": 30
+    },
+    {
+      "cost": [
+        "Grass",
+        "Grass",
+        "Colorless"
+      ],
+      "name": "Vine Whip",
+      "damage": 80
+    }
+  ],
+  "weaknesses": [
+    {
+      "type": "Fire",
+      "value": "\u00d72"
+    }
+  ],
+  "retreat": 3,
+  "regulationMark": "G",
+  "legal": {
+    "standard": false,
+    "expanded": true
+  },
+  "updated": "2026-08-14T19:11:56+01:00",
+  "pricing": {
+    "cardmarket": {
+      "updated": "2026-08-16T03:12:26.166Z",
+      "unit": "EUR",
+      "idProduct": 733597,
+      "avg": 0.14,
+      "low": 0.02,
+      "trend": 0.15,
+      "avg1": 0.16,
+      "avg7": 0.17,
+      "avg30": 0.14,
+      "avg-holo": 0.37,
+      "low-holo": 0.05,
+      "trend-holo": 0.36,
+      "avg1-holo": 0.28,
+      "avg7-holo": 0.37,
+      "avg30-holo": 0.37
+    },
+    "tcgplayer": {
+      "unit": "USD",
+      "updated": "2026-08-16T03:12:33.235Z",
+      "normal": {
+        "productId": 502553,
+        "lowPrice": 0.03,
+        "midPrice": 0.25,
+        "highPrice": 1000,
+        "marketPrice": 0.28,
+        "directLowPrice": null
+      },
+      "reverse-holofoil": {
+        "productId": 502553,
+        "lowPrice": 0.1,
+        "midPrice": 0.42,
+        "highPrice": 19.28,
+        "marketPrice": 0.42,
+        "directLowPrice": 0.41
+      }
+    }
+  }
+}

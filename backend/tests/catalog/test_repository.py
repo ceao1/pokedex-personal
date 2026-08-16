@@ -59,6 +59,41 @@ def test_get_card_devuelve_none_si_no_esta(clean_db):
     assert repository.get_card(clean_db, "no-existe") is None
 
 
+def test_upsert_no_pisa_variantes_de_otra_carta_con_el_mismo_variant_id(clean_db):
+    """`variantId` de TCGdex identifica una *forma* de variante, no una
+    combinación única de carta+variante: TCGdex lo reutiliza entre cartas
+    distintas del mismo set. sv03.5-001 y sv03.5-002 comparten literalmente
+    los variantId `endfynwn4n10gzq` (normal) y `cm4kqul3x1bwlz1f` (reverse).
+
+    Si `card_variant` sigue llaveada solo por `id`, la segunda carta que se
+    guarda pisa en el lugar las filas de la primera y las deja atadas al
+    card_id equivocado: `sv03.5-001` se queda sin variantes."""
+    carta_1 = parse_card(load_fixture("card_sv03.5-001"), CAPTURED_AT)
+    carta_2 = parse_card(load_fixture("card_sv03.5-002"), CAPTURED_AT)
+
+    ids_compartidos = {v.id for v in carta_1.variants} & {v.id for v in carta_2.variants}
+    assert ids_compartidos == {"endfynwn4n10gzq", "cm4kqul3x1bwlz1f"}, (
+        "las fixtures ya no comparten los variantId esperados; el test no prueba nada"
+    )
+
+    repository.upsert_card(clean_db, carta_1)
+    repository.upsert_card(clean_db, carta_2)
+
+    recuperada_1 = repository.get_card(clean_db, "sv03.5-001")
+    recuperada_2 = repository.get_card(clean_db, "sv03.5-002")
+    assert recuperada_1 is not None
+    assert recuperada_2 is not None
+
+    assert len(recuperada_1.variants) == len(carta_1.variants), (
+        "sv03.5-001 perdió variantes: se las robó sv03.5-002 al compartir variantId"
+    )
+    assert len(recuperada_2.variants) == len(carta_2.variants), (
+        "sv03.5-002 perdió variantes: se las robó sv03.5-001 al compartir variantId"
+    )
+    assert {v.id for v in recuperada_1.variants} == {v.id for v in carta_1.variants}
+    assert {v.id for v in recuperada_2.variants} == {v.id for v in carta_2.variants}
+
+
 def test_find_by_set_and_number(clean_db):
     card = parse_card(load_fixture("card_sv03.5-001"), CAPTURED_AT)
     repository.upsert_card(clean_db, card)
