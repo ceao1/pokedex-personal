@@ -12,7 +12,7 @@ from contextlib import AbstractContextManager
 from psycopg import Connection
 
 from . import repository
-from .models import Card
+from .models import Card, CardRef
 from .ports import CatalogPort
 
 # `pool.connection` cumple esta firma tal cual.
@@ -23,6 +23,12 @@ class CatalogService:
     def __init__(self, catalog: CatalogPort, conn_factory: ConnFactory) -> None:
         self._catalog = catalog
         self._conn_factory = conn_factory
+        # `CardRef` es demasiado liviano para espejarse en `app.card` (le
+        # faltan `raw`, `set_name`, etc.), así que el cache de este listado
+        # vive en memoria, por instancia, en vez de en la base como el resto
+        # del espejo. Evita repetir la llamada de red por cada Pokémon de un
+        # mismo set vintage.
+        self._set_cache: dict[str, list[CardRef]] = {}
 
     async def get_card(self, card_id: str) -> Card | None:
         with self._conn_factory() as conn:
@@ -37,6 +43,11 @@ class CatalogService:
         with self._conn_factory() as conn:
             repository.upsert_card(conn, remote)
         return remote
+
+    async def list_set_cards(self, set_id: str) -> list[CardRef]:
+        if set_id not in self._set_cache:
+            self._set_cache[set_id] = await self._catalog.list_set_cards(set_id)
+        return self._set_cache[set_id]
 
     async def find_by_set_and_number(self, set_id: str, local_id: str) -> Card | None:
         with self._conn_factory() as conn:

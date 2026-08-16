@@ -28,3 +28,11 @@ class Card(BaseModel):
     dex_number: int | None = None
     raw: dict
     variants: list[CardVariant] = Field(default_factory=list)
+
+
+class CardRef(BaseModel):
+    """Referencia liviana a una carta, tal como la devuelve el listado de un set."""
+
+    id: str
+    local_id: str
+    name: str

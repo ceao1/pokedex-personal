@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from .models import Card
+from .models import Card, CardRef
 from .variants import parse_variants
 
 
@@ -46,6 +46,18 @@ class TcgdexCatalog:
 
     async def find_by_set_and_number(self, set_id: str, local_id: str) -> Card | None:
         return await self._fetch(f"{self._base_url}/sets/{set_id}/{local_id}")
+
+    async def list_set_cards(self, set_id: str) -> list[CardRef]:
+        """Listado liviano de un set. `GET /sets/{id}` trae `cards[]` con
+        id, localId y name — suficiente para resolver por nombre."""
+        response = await self._client.get(f"{self._base_url}/sets/{set_id}")
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        return [
+            CardRef(id=c["id"], local_id=c["localId"], name=c["name"])
+            for c in response.json().get("cards", [])
+        ]
 
     async def _fetch(self, url: str) -> Card | None:
         response = await self._client.get(url)

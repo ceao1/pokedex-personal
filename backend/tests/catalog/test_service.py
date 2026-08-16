@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from pokedex.catalog.models import CardRef
 from pokedex.catalog.service import CatalogService
 from pokedex.catalog.tcgdex import parse_card
 
@@ -14,10 +15,12 @@ CAPTURED_AT = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 class FakeCatalog:
     """Fake del CatalogPort que cuenta las llamadas."""
 
-    def __init__(self, cards: dict):
+    def __init__(self, cards: dict, set_cards: dict | None = None):
         self._cards = cards
+        self._set_cards = set_cards or {}
         self.get_card_calls = 0
         self.find_calls = 0
+        self.list_set_cards_calls = 0
 
     async def get_card(self, card_id: str):
         self.get_card_calls += 1
@@ -29,6 +32,10 @@ class FakeCatalog:
             if card.set_id == set_id and card.local_id == local_id:
                 return card
         return None
+
+    async def list_set_cards(self, set_id: str):
+        self.list_set_cards_calls += 1
+        return self._set_cards.get(set_id, [])
 
 
 @pytest.fixture()
@@ -82,3 +89,41 @@ async def test_find_by_set_and_number_tambien_espeja(conn_factory, bulbasaur, cl
 
     assert card.id == "sv03.5-001"
     assert fake.find_calls == 1
+
+
+async def test_list_set_cards_delega_al_puerto(conn_factory):
+    fake = FakeCatalog({}, {"base1": [CardRef(id="base1-4", local_id="4", name="Charizard")]})
+    service = CatalogService(fake, conn_factory)
+
+    refs = await service.list_set_cards("base1")
+
+    assert [(r.id, r.local_id, r.name) for r in refs] == [("base1-4", "4", "Charizard")]
+    assert fake.list_set_cards_calls == 1
+
+
+async def test_list_set_cards_cachea_por_set(conn_factory):
+    """Sin este cache el resolver dispararía una llamada de red por cada
+    Pokémon vintage en vez de una por set."""
+    fake = FakeCatalog({}, {"base1": [CardRef(id="base1-4", local_id="4", name="Charizard")]})
+    service = CatalogService(fake, conn_factory)
+
+    await service.list_set_cards("base1")
+    await service.list_set_cards("base1")
+
+    assert fake.list_set_cards_calls == 1
+
+
+async def test_list_set_cards_de_sets_distintos_no_comparte_cache(conn_factory):
+    fake = FakeCatalog(
+        {},
+        {
+            "base1": [CardRef(id="base1-4", local_id="4", name="Charizard")],
+            "base2": [CardRef(id="base2-1", local_id="1", name="Clefable")],
+        },
+    )
+    service = CatalogService(fake, conn_factory)
+
+    await service.list_set_cards("base1")
+    await service.list_set_cards("base2")
+
+    assert fake.list_set_cards_calls == 2

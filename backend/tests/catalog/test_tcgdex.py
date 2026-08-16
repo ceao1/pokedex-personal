@@ -82,3 +82,34 @@ async def test_un_error_del_servidor_se_propaga():
         catalog = TcgdexCatalog(BASE_URL, client)
         with pytest.raises(httpx.HTTPStatusError):
             await catalog.get_card("x")
+
+
+@respx.mock
+async def test_list_set_cards_devuelve_referencias_livianas():
+    respx.get(f"{BASE_URL}/sets/base1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "base1",
+                "name": "Base Set",
+                "cards": [
+                    {
+                        "id": "base1-4",
+                        "localId": "4",
+                        "name": "Charizard",
+                        "image": "https://x/4",
+                    }
+                ],
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        refs = await TcgdexCatalog(BASE_URL, client).list_set_cards("base1")
+    assert [(r.id, r.local_id, r.name) for r in refs] == [("base1-4", "4", "Charizard")]
+
+
+@respx.mock
+async def test_list_set_cards_de_un_set_inexistente_devuelve_vacio():
+    respx.get(f"{BASE_URL}/sets/no-existe").mock(return_value=httpx.Response(404))
+    async with httpx.AsyncClient() as client:
+        assert await TcgdexCatalog(BASE_URL, client).list_set_cards("no-existe") == []
