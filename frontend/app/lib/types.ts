@@ -154,6 +154,90 @@ export type Identificacion = {
   motivo: string;
 };
 
+// --- Compras (sobres, lotes y fotos por tanda) ------------------------------
+
+/** Coincide con `app.purchase.source_type` en el backend. */
+export type PurchaseSourceType =
+  | "sobre"
+  | "lote"
+  | "tienda"
+  | "online"
+  | "intercambio"
+  | "regalo";
+
+/** Coincide con `app.purchase.allocation_method`. */
+export type AllocationMethod = "market_value" | "manual" | "equal";
+
+export type PurchaseOut = {
+  id: number;
+  fecha: string;
+  source_type: string;
+  total_usd: number;
+  allocation_method: string;
+  photo_url: string | null;
+  notes: string | null;
+};
+
+/** Un ejemplar tal como vive guardado en la compra (`GET /compras/{id}`):
+ * sin arte ni nombre -- solo lo que persiste la base. La pantalla mantiene
+ * el nombre y el arte en memoria desde el momento en que se confirmó,
+ * porque este endpoint no los repite. */
+export type EjemplarDeCompraOut = {
+  id: number;
+  card_id: string | null;
+  variant_id: string | null;
+  is_bulk: boolean;
+  valor_mercado_usd: number | null;
+  costo_usd: number | null;
+};
+
+export type PurchaseDetailOut = PurchaseOut & {
+  ejemplares: EjemplarDeCompraOut[];
+};
+
+/** Una lectura de una tanda ya resuelta contra el catálogo
+ * (`LecturaTandaOut`). `carta` solo viene si `(set, número)` resolvió --
+ * igual que `Identificacion` en la captura de una sola carta. */
+export type LecturaTanda = {
+  reconocido: Recognition;
+  carta: Card | null;
+  necesita_revision: boolean;
+  motivo: string;
+};
+
+/** Respuesta de `POST /compras/{id}/tanda`. No guarda nada -- son
+ * propuestas para que el dueño confirme (`TandaOut`). */
+export type TandaOut = {
+  lecturas: LecturaTanda[];
+  total_encontradas: number;
+  excede_limite: boolean;
+};
+
+/** Lo que el dueño confirmó de una carta -- de una tanda o agregada a
+ * mano -- listo para `POST /compras/{id}/ejemplares` (`EjemplarConfirmado`
+ * en el backend). */
+export type EjemplarConfirmadoIn = {
+  card_id: string;
+  variant_id: string;
+  variant_label?: VariantLabel | null;
+  condition?: string | null;
+  notes?: string | null;
+};
+
+export type IdsOut = {
+  ids: number[];
+};
+
+export type AsignacionOut = {
+  ejemplar_id: number;
+  costo_usd: number;
+};
+
+export type RepartirOut = {
+  total_usd: number;
+  asignaciones: AsignacionOut[];
+};
+
 export type OwnedCopy = {
   id: number;
   client_draft_id: string;

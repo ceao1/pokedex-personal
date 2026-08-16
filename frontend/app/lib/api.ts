@@ -1,12 +1,20 @@
 import type {
+  AllocationMethod,
   Card,
+  EjemplarConfirmadoIn,
   Identificacion,
+  IdsOut,
   OtraCarta,
   OwnedCopy,
   OwnedCopyIn,
   Pokemon,
   PokemonDetail,
+  PurchaseDetailOut,
+  PurchaseOut,
+  PurchaseSourceType,
+  RepartirOut,
   StartCapture,
+  TandaOut,
 } from "./types";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -164,4 +172,67 @@ export function buscarCarta(setId: string, localId: string): Promise<Card> {
  * que la ficha lo completa con esta llamada cuando falta la foto. */
 export function fetchCard(cardId: string): Promise<Card> {
   return get<Card>(`/catalog/cards/${encodeURIComponent(cardId)}`);
+}
+
+// --- Compras (sobres, lotes y fotos por tanda) ------------------------------
+//
+// Mismo motivo que las rutas de captura: estas escrituras corren en el
+// navegador del celular, que entra por la IP de la red local, así que van
+// contra `/api/compras/...` (mismo origen) en vez de directo contra
+// FastAPI. Ver `app/api/compras/...` para los proxies.
+
+export function crearCompra(
+  sourceType: PurchaseSourceType,
+  totalUsd: string,
+  notes: string | null = null
+): Promise<PurchaseOut> {
+  return apiPost<PurchaseOut>("/api/compras", { source_type: sourceType, total_usd: totalUsd, notes });
+}
+
+export function fetchCompra(purchaseId: number): Promise<PurchaseDetailOut> {
+  return apiGetLocal<PurchaseDetailOut>(`/api/compras/${purchaseId}`);
+}
+
+/** Identifica varias cartas en una foto -- **no guarda nada**. La foto viaja
+ * como cuerpo crudo, igual que hace el backend con `python-multipart` fuera
+ * de la lista de dependencias (ver `purchases.py`). Puede tardar bastante
+ * (una tanda de doce cartas midió ~17s en la medición del plan), así que
+ * quien llama es responsable de mostrar un estado de espera. */
+export async function subirTanda(purchaseId: number, foto: Blob): Promise<TandaOut> {
+  const response = await fetch(`/api/compras/${purchaseId}/tanda`, {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: foto,
+  });
+  if (!response.ok) {
+    const detalle = await response.json().catch(() => null);
+    throw new Error(
+      (detalle && typeof detalle.detail === "string" && detalle.detail) ||
+        `El backend respondió ${response.status} al leer la foto.`
+    );
+  }
+  return (await response.json()) as TandaOut;
+}
+
+/** Guarda la lista que el dueño confirmó -- nunca al revés. */
+export function confirmarEjemplares(
+  purchaseId: number,
+  ejemplares: EjemplarConfirmadoIn[]
+): Promise<IdsOut> {
+  return apiPost<IdsOut>(`/api/compras/${purchaseId}/ejemplares`, { ejemplares });
+}
+
+/** N ejemplares bulk, sin carta ni foto, a costo cero hasta que se reparte. */
+export function agregarRelleno(purchaseId: number, cantidad: number): Promise<IdsOut> {
+  return apiPost<IdsOut>(`/api/compras/${purchaseId}/relleno`, { cantidad });
+}
+
+/** Aplica el método de reparto. Recalcular con otro método no toca
+ * `total_usd`, así que llamarlo más de una vez es seguro. */
+export function repartirCompra(
+  purchaseId: number,
+  method: AllocationMethod,
+  costos?: Record<number, string> | null
+): Promise<RepartirOut> {
+  return apiPost<RepartirOut>(`/api/compras/${purchaseId}/repartir`, { method, costos: costos ?? null });
 }

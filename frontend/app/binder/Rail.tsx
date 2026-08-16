@@ -53,9 +53,14 @@ export function Rail({ total, conseguidos, costoRestanteUsd, otrasCartasCount }:
         <p className={styles.hint}>Sumando la ruta más económica de cada uno.</p>
       </section>
 
-      <Link href="/registrar" className={styles.registrar}>
-        Registrar una carta
-      </Link>
+      <div className={styles.accionesRegistro}>
+        <Link href="/registrar" className={styles.registrar}>
+          Registrar una carta
+        </Link>
+        <Link href="/compras/nueva" className={styles.registrarLote}>
+          Registrar un sobre o un lote
+        </Link>
+      </div>
     </aside>
   );
 }
