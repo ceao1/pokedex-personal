@@ -224,6 +224,7 @@ Son ortogonales: una carta puede estar guardada en el binder y aún tener la ide
 | `id` | uuid PK | |
 | `dex_number` | int null | Casillero del 151; null si es un deseo fuera del checklist |
 | `card_id` | text FK null | Null cuando la heurística no resolvió |
+| `variant_label` | enum null | Qué versión de esa carta se desea. Necesario porque en 123 de las 151 filas del Excel la Opción 2 es *el reverse holo de la misma carta* de la Opción 1, no otra carta |
 | `raw_text` | text | String original del Excel |
 | `source_option` | enum | `opcion_1`..`opcion_4`, `galeria`, `manual` |
 | `auto_resolved` | bool | Resuelto por heurística, pendiente de tu confirmación |
@@ -233,12 +234,21 @@ Son ortogonales: una carta puede estar guardada en el binder y aún tener la ide
 | `reference_value_usd` | numeric null | El USD escrito a mano en el Excel |
 | `priority` | int null | |
 
-Dos índices únicos parciales para que el reimport sea idempotente:
+Dos índices únicos parciales para que el reimport sea idempotente. La llave
+incluye `variant_label` porque una misma carta puede desearse en dos versiones
+(la normal y su reverse holo), que es exactamente el caso de las 123 filas
+mencionadas arriba:
 
 ```sql
-CREATE UNIQUE INDEX ON wishlist_item (dex_number, card_id) WHERE card_id IS NOT NULL;
+CREATE UNIQUE INDEX ON wishlist_item (dex_number, card_id, variant_label)
+  WHERE card_id IS NOT NULL;
 CREATE UNIQUE INDEX ON wishlist_item (dex_number, raw_text) WHERE card_id IS NULL;
 ```
+
+Nota sobre `NULL` en índices únicos: Postgres trata cada `NULL` como distinto,
+así que `variant_label IS NULL` no deduplicaría. El import siempre asigna una
+variante concreta a los items que resuelven, de modo que la columna solo queda
+nula en items creados a mano.
 
 ### `pokemon`
 
@@ -348,10 +358,26 @@ Fallback si registras después: extracción de GPS del EXIF de la foto.
 
 Fuente: `Pokedex_Viviente_151.xlsx`, tres hojas (*Pokédex 151*, *Guía*, *Galería favoritos*).
 
-**Hoja Pokédex 151.** 151 filas, cada una con hasta cuatro opciones de adquisición:
+**Hoja Pokédex 151.** Exactamente 151 filas de datos, dex 1 a 151, cada una con hasta cuatro opciones de adquisición. El contenido real resultó mucho más regular de lo que el PRD sugería:
 
-- **Opciones 1 y 2** traen número de colección (`Bulbasaur 001/165`, `Bulbasaur 166/165`) → match determinístico contra el set `sv03.5`.
-- **Opciones 3 y 4** son texto libre (`Venusaur Base Set Holo`, `Ivysaur Southern Islands`) → heurística: búsqueda por nombre + set, se prefiere `subtype = unlimited` y se descartan `shadowless` y `1st-edition`, siguiendo la recomendación de la propia hoja *Guía*. Se marcan `auto_resolved = true`.
+- **Opción 1** — las 151 traen número (`Bulbasaur 001/165`). Match determinístico contra el set `sv03.5`, variante `normal`.
+- **Opción 2** — las 151 también traen número, pero son **dos casos distintos**:
+  - **123 filas** dicen `Reverse holo de NNN/165`, con rareza *"Reverse holo (fondo brillante)"*. Es **la misma carta de la Opción 1 en variante reverse**, no otra carta. Por eso `wishlist_item` necesita `variant_label`.
+  - **28 filas** son cartas genuinamente distintas (16 Illustration Rare, 7 Ultra Rare full art, 5 Special Illustration Rare) con su propio número por encima de 165.
+- **Opción 3** — las 151 traen texto vintage, y solo hay **siete formas**, todas mapeables con una tabla fija:
+
+  | Texto | Set de TCGdex | Veces |
+  |---|---|---|
+  | `Base Set` | `base1` | 49 |
+  | `Base Set Holo` | `base1`, preferir holo | 16 |
+  | `Jungle` | `base2` | 31 |
+  | `Jungle Holo` | `base2`, preferir holo | 16 |
+  | `Fossil` | `base3` | 26 |
+  | `Fossil Holo` | `base3`, preferir holo | 12 |
+  | `Black Star Promo` | `basep` | 1 |
+
+  Dentro del set se resuelve por nombre, prefiriendo `subtype = unlimited` y descartando `shadowless` y `1st-edition`, siguiendo la recomendación de la propia hoja *Guía*. Se marcan `auto_resolved = true`.
+- **Opción 4** — solo **9 filas** tienen contenido (Celebrations Classic Collection, Prismatic Evolutions, Pikachu Celebrations); las otras 142 traen un guion. Se resuelven por búsqueda de nombre, y lo que no resuelva queda con `card_id` null.
 - Los USD escritos a mano van a `reference_value_usd`.
 - Lo que no resuelve queda con `card_id` null y su `raw_text`, utilizable para copiar y pegar en el buscador como haces hoy.
 
