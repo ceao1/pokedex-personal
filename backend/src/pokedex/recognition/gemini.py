@@ -22,7 +22,7 @@ _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:gen
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 _PROMPT = """Sos un identificador de cartas del Juego de Cartas Coleccionables \
-Pokémon. Te doy la foto de una carta física y me devolvés SOLO un objeto \
+Pokémon. Te doy la foto de una carta física y me devuelves SOLO un objeto \
 JSON, sin texto adicional, con exactamente estas ocho claves:
 
 - "name": el nombre impreso en la carta tal cual aparece (ej. "Charizard", \
@@ -32,8 +32,8 @@ no se puede determinar con certeza.
 - "number": el número de colección impreso, en formato "N/total" (ej. \
 "4/102"). Es el dato más importante: se usa para validar contra un \
 catálogo real, así que es preferible admitir duda que inventar. Si no \
-podés leer el número con certeza -- por brillo, ángulo, o foto borrosa --
-devolvé null, bajá "confidence" y marcá "needs_review": true. Un número \
+puedes leer el número con certeza -- por brillo, ángulo, o foto borrosa --
+devuelve null, baja "confidence" y marca "needs_review": true. Un número \
 inventado que casualmente exista en el catálogo es el peor resultado \
 posible, porque pasaría la validación sin que nadie note el error.
 - "rarity": la rareza impresa (ej. "Rare Holo"). null si no aplica o no se \
@@ -52,7 +52,7 @@ la lectura completa, no solo del nombre.
 o la especie -- ante la duda, preferí true. false solo si leíste la carta \
 con certeza.
 
-Devolvé únicamente el objeto JSON, sin explicación ni formato adicional."""
+Devuelve únicamente el objeto JSON, sin explicación ni formato adicional."""
 
 
 class GeminiRecognition:

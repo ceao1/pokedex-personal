@@ -187,7 +187,7 @@ async def identificar(client_draft_id: UUID, service: IdentificationDep) -> Iden
             status_code=503,
             detail=(
                 "La identificación por foto está apagada (falta configurar la llave de Gemini). "
-                "Podés registrar la carta a mano."
+                "Puedes registrar la carta a mano."
             ),
         )
     try:
