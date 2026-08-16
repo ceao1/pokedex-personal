@@ -142,45 +142,35 @@ def test_list_pokedex_devuelve_los_sembrados_con_su_conteo(clean_db):
     assert filas[2]["wishlist_count"] == 0
 
 
-def test_list_pokedex_trae_la_carta_de_la_ruta_preferida(clean_db):
-    """La grilla del binder muestra el arte real de la carta que se persigue."""
+def test_list_pokedex_trae_la_carta_por_defecto_del_pokemon(clean_db):
+    """La grilla del binder muestra el arte de la carta por defecto
+    (`sv03.5-{dex:03d}`) sin que exista wishlist alguna: no hay Excel ni
+    "ruta de caza" de la que depender, el catálogo ya sabe cuál es."""
     _sembrar_carta(clean_db)
     clean_db.execute(
         "update app.card set image_url = 'https://x/001/high.png' where id = 'sv03.5-001'"
     )
-    repository.upsert_wishlist_item(clean_db, _item())
     fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
     assert fila["primary_image_url"] == "https://x/001/high.png"
     assert fila["primary_card_name"] == "Bulbasaur"
 
 
-def test_la_ruta_preferida_es_la_opcion_1_y_no_otra(clean_db):
-    """Con varias opciones resueltas gana la económica del set 151."""
-    _sembrar_carta(clean_db)
-    clean_db.execute(
-        """
-        insert into app.card (id, name, set_id, set_name, local_id, image_url, raw)
-        values ('sv03.5-166', 'Bulbasaur IR', 'sv03.5', '151', '166',
-                'https://x/166/high.png', '{}'::jsonb)
-        """
-    )
-    repository.upsert_wishlist_item(
-        clean_db, _item(source_option="opcion_2", card_id="sv03.5-166", variant_label="holo")
-    )
-    repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_1"))
+def test_list_pokedex_sin_carta_por_defecto_no_revienta(clean_db):
+    """Antes del primer espejo de esa carta (`sembrar` sin red, o un
+    Pokémon cuyo dex todavía no tiene fila en `app.card`), el bolsillo
+    queda en `null`, nunca en un error."""
+    repository.upsert_pokemon(clean_db, 1, "Bulbasaur")
     fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
-    assert (
-        fila["primary_image_url"] == "https://x/001/high.png"
-        or fila["primary_card_name"] == "Bulbasaur"
-    )
+    assert fila["primary_image_url"] is None
+    assert fila["primary_card_name"] is None
+    assert fila["primary_price_usd"] is None
 
 
-def test_una_fusion_de_galeria_no_le_roba_la_ruta_preferida_a_opcion_1(clean_db):
-    """Cuando la galería fusiona sobre la clave de la opción 2 (mismo
-    card_id + variant_label), el upsert no debe cambiarle el source_option a
-    esa fila a 'galeria': 'galeria' ordena alfabéticamente antes que
-    'opcion_1', así que si lo hiciera, `primary_image_url` mostraría la
-    Illustration Rare cara en vez de la carta barata del set 151."""
+def test_list_pokedex_ignora_la_wishlist_para_elegir_la_carta(clean_db):
+    """La wishlist ya no decide qué carta se muestra -- solo la carta propia
+    (si existe) o la carta por defecto. Un item de wishlist que apunta a
+    otra carta más cara no debe robarle el bolsillo a la carta por
+    defecto."""
     _sembrar_carta(clean_db)
     clean_db.execute(
         """
@@ -191,18 +181,6 @@ def test_una_fusion_de_galeria_no_le_roba_la_ruta_preferida_a_opcion_1(clean_db)
     )
     repository.upsert_wishlist_item(
         clean_db, _item(source_option="opcion_2", card_id="sv03.5-166", variant_label="holo")
-    )
-    repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_1"))
-    # La galería fusiona sobre la misma clave (dex, card, variante) que opción 2.
-    repository.upsert_wishlist_item(
-        clean_db,
-        _item(
-            source_option="galeria",
-            card_id="sv03.5-166",
-            variant_label="holo",
-            is_favorite=True,
-            raw_text="Bulbasaur 151 166/165",
-        ),
     )
     fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
     assert fila["primary_image_url"] == "https://x/001/high.png"
@@ -326,16 +304,40 @@ def test_list_wishlist_shadowless_y_first_edition_no_se_solapan(clean_db):
     assert filas["first_edition"]["price_usd"] == Decimal("500.00")
 
 
-def test_list_pokedex_tambien_resuelve_unlimited(clean_db):
-    """La misma `_VARIANTE_PREFERIDA` se reusa en `_LIST_POKEDEX`; probamos
-    ambas consultas para no confiar en que compartir el SQL sea suficiente."""
+def test_list_pokedex_salta_una_variante_sin_precio(clean_db):
+    """Si la variante menos exótica de la carta elegida no tiene precio
+    capturado, no hay que devolver `null` habiendo una variante con precio
+    real: eso restaría en silencio a "Completar el 151". La variante sin
+    sello ni foil no tiene precio; la que sí lo tiene queda en segundo lugar
+    por especificidad, pero gana igual porque está priceada."""
     _sembrar_carta(clean_db)
-    _sembrar_variante(
-        clean_db, "sv03.5-001", "sv03.5-001-unl", tipo="normal", subtype="unlimited", precio="5.00"
+    clean_db.execute(
+        """
+        insert into app.card_variant (id, card_id, type, price_usd, price_captured_at, raw)
+        values ('sv03.5-001-sin-precio', 'sv03.5-001', 'normal', null, null, '{}'::jsonb)
+        """
     )
-    repository.upsert_wishlist_item(clean_db, _item(variant_label="unlimited"))
+    _sembrar_variante(
+        clean_db,
+        "sv03.5-001",
+        "sv03.5-001-con-sello",
+        tipo="normal",
+        stamp=["set-logo"],
+        precio="28.00",
+    )
     fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
-    assert fila["primary_price_usd"] == Decimal("5.00")
+    assert fila["primary_price_usd"] == Decimal("28.00")
+
+
+def test_list_pokedex_el_precio_y_su_fecha_vienen_de_la_misma_variante(clean_db):
+    """`primary_price_usd` y `primary_price_captured_at` deben describir la
+    misma variante -- si no, la fecha mostrada podría corresponder a un
+    precio distinto del que ve el usuario."""
+    _sembrar_carta(clean_db)
+    _sembrar_variante(clean_db, "sv03.5-001", "sv03.5-001-normal", tipo="normal", precio="0.10")
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["primary_price_usd"] == Decimal("0.10")
+    assert fila["primary_price_captured_at"] is not None
 
 
 def test_owned_count_es_cero_mientras_no_haya_captura(clean_db):

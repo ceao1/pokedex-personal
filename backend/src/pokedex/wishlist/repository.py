@@ -25,8 +25,10 @@ do update set
     raw_text            = excluded.raw_text,
     -- No se pisa: "gana el primero que resolvió esta clave". Si se
     -- actualizara, una fila de la galería que fusiona sobre la clave de
-    -- otra opción le robaría el source_option (y con él, el orden que usa
-    -- `primary_image_url` en `_LIST_POKEDEX` para elegir la ruta barata).
+    -- otra opción le robaría el source_option a la fila ya existente. Esto
+    -- ya no afecta a `primary_image_url` (`_LIST_POKEDEX` no lee la
+    -- wishlist para elegir la carta), pero sigue siendo la fuente honesta
+    -- de qué opción resolvió primero un `card_id`/`variant_label` dado.
     is_favorite         = app.wishlist_item.is_favorite or excluded.is_favorite,
     reference_value_usd = excluded.reference_value_usd,
     updated_at          = now()
@@ -64,6 +66,9 @@ do update set
 # `first_edition` mira el arreglo `stamp`. Si `_matches` cambia, este `case`
 # tiene que cambiar con ella; que no diverjan es lo que impide un bug de
 # "156 de 421 items sin precio".
+#
+# Solo la usa `_LIST_WISHLIST`: `_LIST_POKEDEX` ya no deriva su carta ni su
+# precio de la wishlist (ver `_CARTA_ELEGIDA` más abajo).
 _VARIANTE_PREFERIDA = """
     select v.price_usd, v.price_captured_at
     from app.card_variant v
@@ -94,6 +99,51 @@ where (%(dex_number)s::integer is null or w.dex_number = %(dex_number)s::integer
 order by w.dex_number, w.source_option
 """
 
+# La carta que representa a este Pokémon en el bolsillo: la que el dueño ya
+# tiene (si existe) o, si no, la carta por defecto `sv03.5-{dex:03d}` -- en
+# el set `sv03.5` (el set "151" de TCGdex) el número de carta 001..151 ES el
+# número de dex, contrato verificado en
+# `tests/catalog/test_pokemon_151_contract.py` y sembrado por
+# `wishlist.seed.SeedService`. La wishlist ya no participa acá: sin el
+# Excel no hay "ruta de caza" que preferir, y la carta por defecto le gana a
+# cualquier item de wishlist que quedara sembrado por costumbre.
+#
+# Expresión repetida (no una única subconsulta reusada) a propósito, igual
+# que ya hacía este archivo para el par imagen/nombre del ejemplar propio:
+# es una subconsulta escalar correlacionada a `p.dex_number`, no un join, así
+# que no puede multiplicar las filas ya agrupadas por `p.dex_number`.
+_CARTA_ELEGIDA = """
+    coalesce(
+      (select oc.id
+         from app.owned_copy o
+         join app.card oc on oc.id = o.card_id
+        where oc.dex_number = p.dex_number
+          and o.lifecycle_status <> 'vendida'
+        -- Mismo desempate que el resto de este archivo: `created_at` es
+        -- hora de transacción, `id` la hace determinista.
+        order by o.created_at desc, o.id desc
+        limit 1),
+      'sv03.5-' || lpad(p.dex_number::text, 3, '0')
+    )
+"""
+
+# Variante representativa de la carta elegida: la menos exótica (mismo
+# criterio que `catalog.variants._specificity` -- sin sello, sin foil, id
+# como desempate final), pero primero exige tener precio. Sin ese primer
+# criterio, una variante sin precio capturado (`price_usd is null`) le
+# ganaría a una con precio real solo por ser menos exótica, y el bolsillo
+# mostraría `null` habiendo un precio de verdad -- exactamente lo que
+# `_LIST_WISHLIST` evitaba con su `filter (where v.price_usd is not null)`.
+#
+# Se repite byte a byte en las dos subconsultas de precio de abajo (precio y
+# fecha de congelado): tienen que ordenar igual para que las dos elijan la
+# misma fila de variante, o la fecha mostrada describiría un precio
+# distinto del que ve el usuario (mismo riesgo que ya evita el par
+# imagen/nombre del ejemplar propio, arriba).
+_ORDEN_VARIANTE_ELEGIDA = (
+    "(v.price_usd is null)::int, (v.stamp <> '{}')::int, (v.foil is not null)::int, v.id"
+)
+
 _LIST_POKEDEX = f"""
 select p.dex_number,
        p.name,
@@ -106,56 +156,28 @@ select p.dex_number,
           join app.card oc on oc.id = o.card_id
          where oc.dex_number = p.dex_number
            and o.lifecycle_status <> 'vendida') as owned_count,
-       -- El bolsillo muestra tu carta en cuanto la tienes: ya no persigues
-       -- nada, y la que tienes puede ser otra impresión. Subconsulta
-       -- escalar (con `limit 1`, no un join) para no multiplicar las filas
-       -- ya agrupadas por p.dex_number -- este repositorio ya tuvo ese bug
-       -- dos veces. Sin ejemplares, cae a la ruta más barata de siempre.
-       coalesce(
-         (select oc.image_url
-            from app.owned_copy o
-            join app.card oc on oc.id = o.card_id
-           where oc.dex_number = p.dex_number
-             and o.lifecycle_status <> 'vendida'
-           -- `created_at` es hora de transacción, no un reloj por fila: dos
-           -- ejemplares insertados en la misma transacción empatan. `id`
-           -- desempata igual en las dos subconsultas -- de lo contrario la
-           -- imagen podría venir de una impresión y el nombre de otra.
-           order by o.created_at desc, o.id desc
-           limit 1),
-         (array_agg(c.image_url order by w.source_option)
-            filter (where c.image_url is not null))[1]
-       ) as primary_image_url,
-       coalesce(
-         (select oc.name
-            from app.owned_copy o
-            join app.card oc on oc.id = o.card_id
-           where oc.dex_number = p.dex_number
-             and o.lifecycle_status <> 'vendida'
-           -- `created_at` es hora de transacción, no un reloj por fila: dos
-           -- ejemplares insertados en la misma transacción empatan. `id`
-           -- desempata igual en las dos subconsultas -- de lo contrario la
-           -- imagen podría venir de una impresión y el nombre de otra.
-           order by o.created_at desc, o.id desc
-           limit 1),
-         (array_agg(c.name order by w.source_option)
-            filter (where c.image_url is not null))[1]
-       ) as primary_card_name,
+       (select c.image_url from app.card c where c.id = ({_CARTA_ELEGIDA})) as primary_image_url,
+       (select c.name from app.card c where c.id = ({_CARTA_ELEGIDA})) as primary_card_name,
        -- primary_price_usd NO cambia de significado: sigue siendo el costo
-       -- de la ruta más barata, porque alimenta "Completar el 151", que solo
-       -- suma los Pokémon que aún no se tienen.
-       (array_agg(v.price_usd order by w.source_option)
-          filter (where v.price_usd is not null))[1] as primary_price_usd,
-       -- Misma máscara de filtro que primary_price_usd: el precio y su
-       -- fecha de congelado (spec §11/§15) tienen que venir del mismo par
-       -- (card_id, variant_label), o la fecha quedaría describiendo un
-       -- precio distinto del que se muestra.
-       (array_agg(v.price_captured_at order by w.source_option)
-          filter (where v.price_usd is not null))[1] as primary_price_captured_at
+       -- de conseguir este Pokémon, porque alimenta "Completar el 151", que
+       -- solo suma los Pokémon que aún no se tienen -- ahora leído de la
+       -- carta elegida (la propia si existe, si no la de referencia) en vez
+       -- de la ruta de caza más barata del Excel, que ya no existe.
+       (select v.price_usd
+          from app.card_variant v
+         where v.card_id = ({_CARTA_ELEGIDA})
+         order by {_ORDEN_VARIANTE_ELEGIDA}
+         limit 1) as primary_price_usd,
+       -- Spec §11/§15: la fecha de congelado tiene que venir de la misma
+       -- variante que el precio de arriba (ver el comentario de
+       -- `_ORDEN_VARIANTE_ELEGIDA`).
+       (select v.price_captured_at
+          from app.card_variant v
+         where v.card_id = ({_CARTA_ELEGIDA})
+         order by {_ORDEN_VARIANTE_ELEGIDA}
+         limit 1) as primary_price_captured_at
 from app.pokemon p
 left join app.wishlist_item w on w.dex_number = p.dex_number
-left join app.card c on c.id = w.card_id
-left join lateral ({_VARIANTE_PREFERIDA}) v on true
 group by p.dex_number, p.name
 order by p.dex_number
 """
