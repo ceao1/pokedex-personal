@@ -1142,7 +1142,50 @@ def test_list_pokedex_devuelve_los_sembrados_con_su_conteo(clean_db):
     assert filas[1]["name"] == "Bulbasaur"
     assert filas[1]["wishlist_count"] == 1
     assert filas[2]["wishlist_count"] == 0
+
+
+def test_list_pokedex_trae_la_carta_de_la_ruta_preferida(clean_db):
+    """La grilla del binder muestra el arte real de la carta que se persigue."""
+    _sembrar_carta(clean_db)
+    clean_db.execute(
+        "update app.card set image_url = 'https://x/001/high.png' where id = 'sv03.5-001'"
+    )
+    repository.upsert_wishlist_item(clean_db, _item())
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["primary_image_url"] == "https://x/001/high.png"
+    assert fila["primary_card_name"] == "Bulbasaur"
+
+
+def test_la_ruta_preferida_es_la_opcion_1_y_no_otra(clean_db):
+    """Con varias opciones resueltas gana la económica del set 151."""
+    _sembrar_carta(clean_db)
+    clean_db.execute(
+        """
+        insert into app.card (id, name, set_id, set_name, local_id, image_url, raw)
+        values ('sv03.5-166', 'Bulbasaur IR', 'sv03.5', '151', '166',
+                'https://x/166/high.png', '{}'::jsonb)
+        """
+    )
+    repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_2",
+                                                    card_id="sv03.5-166",
+                                                    variant_label="holo"))
+    repository.upsert_wishlist_item(clean_db, _item(source_option="opcion_1"))
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["primary_image_url"] == "https://x/001/high.png" or fila[
+        "primary_card_name"
+    ] == "Bulbasaur"
+
+
+def test_owned_count_es_cero_mientras_no_haya_captura(clean_db):
+    """El contador del dashboard no puede mentir sobre lo que se posee.
+    `app.owned_copy` no existe todavía, así que la respuesta honesta es cero."""
+    _sembrar_carta(clean_db)
+    repository.upsert_wishlist_item(clean_db, _item())
+    fila = next(f for f in repository.list_pokedex(clean_db) if f["dex_number"] == 1)
+    assert fila["owned_count"] == 0
 ```
+
+El penúltimo test necesita que `_sembrar_carta` deje `image_url` puesto; ajustar su `insert` para incluir `'https://x/001/high.png'` en esa columna.
 
 - [ ] **Step 2: Correr y verificar que fallan**
 
@@ -1233,9 +1276,25 @@ _LIST_POKEDEX = """
 select p.dex_number,
        p.name,
        count(w.id) as wishlist_count,
-       count(w.id) filter (where w.card_id is null) as sin_resolver
+       count(w.id) filter (where w.card_id is null) as sin_resolver,
+       -- Ejemplares en posesión. Hoy siempre cero porque `app.owned_copy` no
+       -- existe todavía: el flujo de captura llega en un plan posterior. Vive
+       -- aquí, y no como default del modelo, para que activarlo sea cambiar
+       -- esta línea por el count real y nada más.
+       0::int as owned_count,
+       -- Carta y precio de la ruta preferida. `source_option` ordena
+       -- alfabéticamente y 'opcion_1' es la primera, así que esto devuelve la
+       -- ruta económica del set 151 cuando resolvió.
+       (array_agg(c.image_url order by w.source_option)
+          filter (where c.image_url is not null))[1] as primary_image_url,
+       (array_agg(c.name order by w.source_option)
+          filter (where c.image_url is not null))[1] as primary_card_name,
+       (array_agg(v.price_usd order by w.source_option)
+          filter (where v.price_usd is not null))[1] as primary_price_usd
 from app.pokemon p
 left join app.wishlist_item w on w.dex_number = p.dex_number
+left join app.card c on c.id = w.card_id
+left join app.card_variant v on v.card_id = w.card_id and v.type = w.variant_label
 group by p.dex_number, p.name
 order by p.dex_number
 """
@@ -1527,6 +1586,26 @@ def test_get_pokedex_incluye_el_conteo_de_wishlist(sembrado):
     assert por_dex[2]["wishlist_count"] == 0
 
 
+def test_get_pokedex_trae_el_arte_de_la_ruta_preferida(sembrado):
+    """La grilla del binder dibuja la carta real que se persigue."""
+    with TestClient(app) as client:
+        body = client.get("/pokedex").json()
+    por_dex = {p["dex_number"]: p for p in body}
+    assert por_dex[1]["primary_image_url"].endswith("/high.png")
+    assert por_dex[1]["primary_card_name"] == "Bulbasaur"
+    assert por_dex[2]["primary_image_url"] is None
+
+
+def test_el_contador_de_conseguidos_no_miente(sembrado):
+    """`owned_count` es lo que el dashboard muestra como progreso del 151.
+    Tener rutas de caza no es tener la carta: con una wishlist sembrada y sin
+    captura, el progreso honesto es cero."""
+    with TestClient(app) as client:
+        body = client.get("/pokedex").json()
+    assert all(p["owned_count"] == 0 for p in body)
+    assert any(p["wishlist_count"] > 0 for p in body)
+
+
 def test_get_pokedex_de_un_pokemon_trae_sus_opciones(sembrado):
     with TestClient(app) as client:
         response = client.get("/pokedex/1")
@@ -1573,6 +1652,13 @@ class PokemonOut(BaseModel):
     name: str
     wishlist_count: int
     sin_resolver: int
+    # Ejemplares en posesión. Hoy siempre cero (ver el comentario del
+    # repositorio); el contador del dashboard se alimenta de aquí y no de
+    # `wishlist_count`, que cuenta rutas de caza y no cartas conseguidas.
+    owned_count: int
+    primary_image_url: str | None
+    primary_card_name: str | None
+    primary_price_usd: float | None
 
 
 class WishlistItemOut(BaseModel):
@@ -1598,8 +1684,13 @@ class PokemonDetailOut(PokemonOut):
 
 
 def _to_float(row: dict) -> dict:
+    """`numeric` de Postgres llega como Decimal y JSON no lo serializa.
+
+    La conversión a float ocurre solo en el borde HTTP, nunca en el modelo ni
+    en la base: el dinero se guarda y se calcula en Decimal.
+    """
     salida = dict(row)
-    for campo in ("reference_value_usd", "price_usd"):
+    for campo in ("reference_value_usd", "price_usd", "primary_price_usd"):
         if salida.get(campo) is not None:
             salida[campo] = float(salida[campo])
     salida.pop("price_captured_at", None)
@@ -1609,7 +1700,7 @@ def _to_float(row: dict) -> dict:
 @router.get("/pokedex", response_model=list[PokemonOut])
 def list_pokedex(request: Request) -> list[PokemonOut]:
     with request.app.state.pool.connection() as conn:
-        return [PokemonOut(**row) for row in repository.list_pokedex(conn)]
+        return [PokemonOut(**_to_float(row)) for row in repository.list_pokedex(conn)]
 
 
 @router.get("/pokedex/{dex_number}", response_model=PokemonDetailOut)
@@ -1622,7 +1713,7 @@ def get_pokemon(dex_number: int, request: Request) -> PokemonDetailOut:
             raise HTTPException(status_code=404, detail=f"dex {dex_number} no encontrado")
         opciones = repository.list_wishlist(conn, dex_number)
     return PokemonDetailOut(
-        **fila, options=[WishlistItemOut(**_to_float(o)) for o in opciones]
+        **_to_float(fila), options=[WishlistItemOut(**_to_float(o)) for o in opciones]
     )
 
 
