@@ -65,6 +65,7 @@ def get_service(request: Request) -> CaptureService:
         settings.supabase_secret_key,
         settings.storage_bucket,
         request.app.state.http_client,
+        public_base_url=settings.storage_public_url or None,
     )
     return CaptureService(storage, request.app.state.pool.connection)
 

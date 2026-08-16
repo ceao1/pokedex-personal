@@ -288,8 +288,7 @@ def test_dos_ejemplares_de_la_misma_carta_cuentan_dos(clean_db):
     151 se calcula sobre Pokémon distintos, no sobre este conteo."""
     _sembrar_carta(clean_db)
     repository.upsert_wishlist_item(clean_db, _item())
-    for uuid_ in ("88888888-8888-8888-8888-888888888888",
-                  "99999999-9999-9999-9999-999999999999"):
+    for uuid_ in ("88888888-8888-8888-8888-888888888888", "99999999-9999-9999-9999-999999999999"):
         clean_db.execute(
             "insert into app.owned_copy (client_draft_id, card_id) values (%s, 'sv03.5-001')",
             (uuid_,),

@@ -43,9 +43,20 @@ class StoragePort(Protocol):
 
 class SupabaseStorage:
     def __init__(
-        self, base_url: str, secret_key: str, bucket: str, client: httpx.AsyncClient
+        self,
+        base_url: str,
+        secret_key: str,
+        bucket: str,
+        client: httpx.AsyncClient,
+        public_base_url: str | None = None,
     ) -> None:
+        # Dos bases a propósito. `_base` es la que usa el servidor para hablar
+        # con Storage y vive en loopback. `_public_base` es la que se le
+        # entrega al navegador: si el celular recibe una URL con 127.0.0.1
+        # intenta subir a sí mismo, la conexión se rechaza y la foto se pierde
+        # en silencio, porque el flujo está diseñado para guardar sin ella.
         self._base = f"{base_url.rstrip('/')}/storage/v1"
+        self._public_base = f"{(public_base_url or base_url).rstrip('/')}/storage/v1"
         self._headers = {"Authorization": f"Bearer {secret_key}", "apikey": secret_key}
         self._bucket = bucket
         self._client = client
@@ -65,7 +76,9 @@ class SupabaseStorage:
         # La API devuelve la url con el token embebido en query string.
         url = cuerpo["url"]
         token = url.split("token=", 1)[1] if "token=" in url else cuerpo.get("token", "")
-        return SignedUpload(path=path, signed_url=f"{self._base}/{url.lstrip('/')}", token=token)
+        return SignedUpload(
+            path=path, signed_url=f"{self._public_base}/{url.lstrip('/')}", token=token
+        )
 
     async def signed_download_url(self, path: str, seconds: int = 3600) -> str:
         response = await self._client.post(
@@ -74,7 +87,7 @@ class SupabaseStorage:
             json={"expiresIn": seconds},
         )
         response.raise_for_status()
-        return f"{self._base}/{response.json()['signedURL'].lstrip('/')}"
+        return f"{self._public_base}/{response.json()['signedURL'].lstrip('/')}"
 
 
 class FakeStorage:
