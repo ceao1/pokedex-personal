@@ -3,17 +3,39 @@
 uv run python -m pokedex.cli import-excel ../Pokedex_Viviente_151.xlsx
 """
 
-import argparse
-import asyncio
 import sys
+from pathlib import Path
 
-import httpx
+# macOS a veces marca como oculto (`UF_HIDDEN`) el .pth de la instalación
+# editable, y `site.py` ignora los .pth ocultos al armar `sys.path` al
+# arrancar el intérprete -- el mismo problema que forzó `pythonpath =
+# ["src"]` en la config de pytest y `--app-dir src` en la invocación de
+# uvicorn (ver los comentarios ahí). pytest y uvicorn tienen su propio
+# escape hatch para insertar `src`; un `python` o `python -m` liso no tiene
+# ninguno, así que se agrega acá. No borrar pensando que es dead code:
+# cubre invocar este archivo directamente como script (donde Python no
+# necesita resolver el paquete `pokedex` para arrancar, pero sí lo
+# necesitan los `from pokedex...` de abajo). Para `-m pokedex.cli` el
+# problema es anterior a esta línea -- Python tiene que resolver el
+# paquete `pokedex` antes de ejecutar una sola línea de este archivo -- y
+# se corrige reparando el `.pth` (`chflags nohidden` sobre el archivo
+# marcado oculto en `site-packages`), no con código.
+if "pokedex" not in sys.modules:
+    try:
+        import pokedex  # noqa: F401
+    except ModuleNotFoundError:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pokedex.catalog.service import CatalogService
-from pokedex.catalog.tcgdex import TcgdexCatalog
-from pokedex.config import settings
-from pokedex.db import create_pool
-from pokedex.wishlist.service import ImportService
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+
+import httpx  # noqa: E402
+
+from pokedex.catalog.service import CatalogService  # noqa: E402
+from pokedex.catalog.tcgdex import TcgdexCatalog  # noqa: E402
+from pokedex.config import settings  # noqa: E402
+from pokedex.db import create_pool  # noqa: E402
+from pokedex.wishlist.service import ImportService  # noqa: E402
 
 
 async def _import_excel(path: str) -> int:
