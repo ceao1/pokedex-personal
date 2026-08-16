@@ -460,6 +460,17 @@ export function Captura() {
   const esSetWotc = carta !== null && SETS_WOTC.has(carta.set_id);
   const puedeGuardar = carta !== null && !guardando;
 
+  // Una carta resuelta cuyo dex_number no cae en 1..151 no es del proyecto:
+  // vivirá en "Otras cartas", nunca en el binder. Se avisa, no se bloquea
+  // (spec: "avisar antes"), y el aviso nombra la carta concreta.
+  const fueraDelProyecto =
+    carta !== null && (carta.dex_number === null || carta.dex_number < 1 || carta.dex_number > 151);
+
+  // Cuando la identificación por foto corrió y no resolvió ninguna carta, y
+  // el dueño tampoco la precisó a mano todavía, no hay forma de saber si es
+  // de los 151 -- el mismo aviso, honesto sobre la incertidumbre.
+  const sinIdentificar = carta === null && identificacion !== null && !identificacion.carta;
+
   if (guardado) {
     return (
       <div className={styles.tarjeta}>
@@ -701,6 +712,20 @@ export function Captura() {
           placeholder="0.00"
         />
       </label>
+
+      {fueraDelProyecto && (
+        <p className={styles.aviso} aria-live="polite">
+          <strong>{carta?.name} no es de los 151.</strong> Se guardará en <em>Otras cartas</em>,
+          no en el binder.
+        </p>
+      )}
+
+      {sinIdentificar && (
+        <p className={styles.aviso} aria-live="polite">
+          Sin identificar la carta no sabemos si es de los 151. Se guardará en{" "}
+          <em>Otras cartas</em> hasta que la precises.
+        </p>
+      )}
 
       {errorGuardado && <p className={styles.error}>{errorGuardado}</p>}
 
