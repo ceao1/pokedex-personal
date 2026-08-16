@@ -1,0 +1,114 @@
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding: 1.5rem;
+  background: var(--binder-deep);
+  border-right: 1px solid color-mix(in srgb, var(--sleeve-edge) 30%, transparent);
+}
+
+.brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+/* La lente redonda del aparato. Único uso del rojo de carcasa en grande. */
+.lens {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, #bff3ff, var(--lens) 42%, #1c6a8a);
+  box-shadow:
+    0 0 0 3px var(--shell),
+    0 0 14px color-mix(in srgb, var(--lens) 50%, transparent);
+}
+
+.title {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 800;
+  font-size: var(--step-2);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  font-family: var(--font-data), monospace;
+}
+
+.have {
+  font-size: var(--step-3);
+  font-weight: 700;
+  color: var(--stock);
+}
+
+.of {
+  font-size: var(--step-0);
+  color: var(--stock-dim);
+}
+
+.bar {
+  margin-block: 0.6rem 0.5rem;
+  block-size: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--sleeve-edge) 30%, transparent);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  block-size: 100%;
+  background: linear-gradient(90deg, var(--shell), var(--lens));
+}
+
+.hint,
+.moneyLabel {
+  font-size: var(--step-0);
+  color: var(--stock-dim);
+}
+
+.moneyValue {
+  font-family: var(--font-data), monospace;
+  font-size: var(--step-2);
+}
+
+.usd {
+  font-size: var(--step--1);
+  color: var(--stock-dim);
+}
+
+@media (max-width: 899px) {
+  .rail {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-right: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--sleeve-edge) 30%, transparent);
+  }
+
+  .title,
+  .hint,
+  .money {
+    display: none;
+  }
+
+  .bar {
+    inline-size: 40vw;
+    margin: 0;
+  }
+
+  .counter {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+}
