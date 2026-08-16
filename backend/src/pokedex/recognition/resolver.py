@@ -29,10 +29,13 @@ la respuesta para que la pantalla las muestre, pero lo único que impide
 proponer una carta es la falta de confirmación del catálogo. Cuando el
 modelo dudaba y el catálogo confirma, el motivo lo dice.
 
-Cuando el catálogo deja más de una candidata confirmada (mismo número,
-mismo denominador, ninguna se distingue por nombre/dexId), no se elige
-ninguna: quedan en `ResolucionCarta.candidatas` para revisión manual --
-nunca una adivinanza (ver `_resolver_en_sets`).
+Cuando el catálogo deja entre 2 y 5 candidatas confirmadas (mismo número,
+mismo denominador, ninguna se distingue por nombre/dexId), el desempate
+por imagen (`RecognitionPort.elegir_entre`, ver `ports.py`) decide entre
+ellas si hay foto del dueño y un `RecognitionPort` disponibles; si no, o si
+el desempate no distingue con certeza, o si son más de cinco, quedan en
+`ResolucionCarta.candidatas` para revisión manual -- nunca una adivinanza
+(ver `_resolver_en_sets`).
 
 También intenta rellenar `Card.dex_number` cuando falta (cartas de
 entrenador tipo "Erika's Gloom", que TCGdex no etiqueta con `dexId`) usando
@@ -44,6 +47,7 @@ señales se contradicen, no se adivina cuál vale: revisión manual.
 import re
 import unicodedata
 
+import httpx
 from pydantic import BaseModel
 
 from pokedex.catalog import repository as catalog_repository
@@ -51,6 +55,7 @@ from pokedex.catalog.models import Card
 from pokedex.catalog.service import CatalogService
 
 from .models import Recognition
+from .ports import CandidataImagen, RecognitionPort
 
 # Piloteado, no medido: punto de partida para decidir cuándo el motivo de
 # éxito debe mencionar que el modelo dudó (ver `_motivo_exito`). Ya no es un
@@ -63,6 +68,11 @@ CONFIDENCE_THRESHOLD = 0.7
 # Un dex_number fuera de este rango no es un error del modelo -- es una
 # carta fuera de alcance -- así que no se infiere ni se marca revisión.
 DEX_MIN, DEX_MAX = 1, 151
+
+# Cuántas candidatas confirmadas admite el desempate por imagen (task 3).
+# Con una, ya está (no llega acá). Con más de cinco, mandar esa cantidad de
+# fotos por identificación no compensa: se devuelven para revisión manual.
+DESEMPATE_MIN, DESEMPATE_MAX = 2, 5
 
 _NUMBER_WITH_SLASH_RE = re.compile(r"^\s*([^\s/]+)\s*/\s*(\d+)\s*$")
 _NUMBER_BARE_RE = re.compile(r"^\s*([^\s/]+)\s*$")
@@ -164,11 +174,25 @@ def _confirmar(reconocido: Recognition, card: Card) -> tuple[bool | None, str]:
 
 
 class CardResolver:
-    def __init__(self, catalog: CatalogService, conn_factory) -> None:
+    def __init__(
+        self,
+        catalog: CatalogService,
+        conn_factory,
+        recognition: RecognitionPort | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._catalog = catalog
         self._conn_factory = conn_factory
+        # Ambos opcionales: el desempate por imagen solo se intenta cuando
+        # los dos están presentes y además hay foto del dueño (ver
+        # `resolver`/`_intentar_desempate`). Sin ellos, 2-5 candidatas
+        # confirmadas simplemente quedan para revisión manual -- el
+        # comportamiento correcto para cualquier llamador que no los
+        # provea (la mayoría de los tests de este módulo).
+        self._recognition = recognition
+        self._http_client = http_client
 
-    async def resolver(self, reconocido: Recognition) -> ResolucionCarta:
+    async def resolver(self, reconocido: Recognition, foto: bytes | None = None) -> ResolucionCarta:
         if not reconocido.number:
             return ResolucionCarta(
                 motivo="el modelo no devolvió el número de colección", necesita_revision=True
@@ -199,7 +223,9 @@ class CardResolver:
                         ),
                         necesita_revision=True,
                     )
-                resultado = await self._resolver_en_sets([set_por_codigo], numerator, reconocido)
+                resultado = await self._resolver_en_sets(
+                    [set_por_codigo], numerator, reconocido, foto
+                )
                 if resultado is not None:
                     return resultado
                 # El código es autoritativo: dio un único set real. Si la
@@ -219,7 +245,9 @@ class CardResolver:
         if denominator is not None:
             sets_por_total = await self._catalog.sets_por_total(denominator)
             if sets_por_total:
-                resultado = await self._resolver_en_sets(sets_por_total, numerator, reconocido)
+                resultado = await self._resolver_en_sets(
+                    sets_por_total, numerator, reconocido, foto
+                )
                 if resultado is not None:
                     return resultado
 
@@ -227,7 +255,9 @@ class CardResolver:
         if reconocido.set_name:
             set_por_nombre = await self._buscar_set(reconocido.set_name)
             if set_por_nombre is not None:
-                resultado = await self._resolver_en_sets([set_por_nombre], numerator, reconocido)
+                resultado = await self._resolver_en_sets(
+                    [set_por_nombre], numerator, reconocido, foto
+                )
                 if resultado is not None:
                     return resultado
 
@@ -241,7 +271,7 @@ class CardResolver:
         )
 
     async def _resolver_en_sets(
-        self, sets, numerator: str, reconocido: Recognition
+        self, sets, numerator: str, reconocido: Recognition, foto: bytes | None
     ) -> ResolucionCarta | None:
         """Busca la carta `numerator` en cada set y aplica `_confirmar`.
 
@@ -276,7 +306,12 @@ class CardResolver:
 
         if confirmados:
             # Más de una candidata confirmada y ninguna se distingue por
-            # nombre/dexId: no se elige al azar.
+            # nombre/dexId: no se elige al azar salvo que el desempate por
+            # imagen (2-5 candidatas, con foto y RecognitionPort) la
+            # distinga con certeza.
+            elegido = await self._intentar_desempate(foto, confirmados)
+            if elegido is not None:
+                return await self._finalizar(elegido, reconocido, desempatado=True)
             return ResolucionCarta(
                 motivo=(
                     f"el número calzaba con {len(confirmados)} cartas del catálogo sin que "
@@ -291,7 +326,38 @@ class CardResolver:
 
         return None
 
-    async def _finalizar(self, card: Card, reconocido: Recognition) -> ResolucionCarta:
+    async def _intentar_desempate(self, foto: bytes | None, candidatos: list[Card]) -> Card | None:
+        """Task 3: solo se invoca con 2 a 5 candidatas confirmadas, nunca
+        como primer paso. Si falta la foto, el `RecognitionPort`, el
+        `http_client`, si hay más de cinco candidatas, si alguna no tiene
+        `image_url`, o si la descarga de alguna imagen de referencia falla,
+        no se intenta -- el llamador cae a revisión manual."""
+        if not (DESEMPATE_MIN <= len(candidatos) <= DESEMPATE_MAX):
+            return None
+        if foto is None or self._recognition is None or self._http_client is None:
+            return None
+
+        candidatas_imagen: list[CandidataImagen] = []
+        for card in candidatos:
+            if not card.image_url:
+                return None
+            try:
+                response = await self._http_client.get(card.image_url)
+                response.raise_for_status()
+            except httpx.HTTPError:
+                return None
+            candidatas_imagen.append(CandidataImagen(card_id=card.id, image=response.content))
+
+        elegido_id = await self._recognition.elegir_entre(foto, candidatas_imagen)
+        if elegido_id is None:
+            return None
+        # El id que devuelva tiene que estar entre las candidatas que se le
+        # pasaron -- cualquier otra cosa es una alucinación, no una elección.
+        return next((c for c in candidatos if c.id == elegido_id), None)
+
+    async def _finalizar(
+        self, card: Card, reconocido: Recognition, *, desempatado: bool = False
+    ) -> ResolucionCarta:
         """Última parada antes del éxito: si la carta no trae `dex_number`
         de TCGdex, intenta inferirlo de `species`/`dex_number` validando
         contra `app.pokemon`. Una contradicción ahí también rechaza toda la
@@ -313,7 +379,12 @@ class CardResolver:
                     catalog_repository.set_inferred_dex_number(conn, card.id, especie)
                     card = catalog_repository.get_card(conn, card.id)
 
-        return ResolucionCarta(card=card, motivo=_motivo_exito(reconocido), necesita_revision=False)
+        motivo = (
+            "el número calzaba con varias cartas del catálogo; se desempató por la foto"
+            if desempatado
+            else _motivo_exito(reconocido)
+        )
+        return ResolucionCarta(card=card, motivo=motivo, necesita_revision=False)
 
     async def _buscar_set(self, set_name: str):
         objetivo = set_name.strip().casefold()

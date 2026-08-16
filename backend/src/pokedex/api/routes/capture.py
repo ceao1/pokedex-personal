@@ -191,7 +191,16 @@ def get_identification_service(request: Request) -> IdentificationService | None
     catalog = CatalogService(
         TcgdexCatalog(settings.tcgdex_base_url, http_client), request.app.state.pool.connection
     )
-    resolver = CardResolver(catalog, request.app.state.pool.connection)
+    # `recognition`/`http_client`: el desempate por imagen (task 3) los
+    # necesita para bajar el arte de cada candidata y preguntarle a Gemini
+    # cuál coincide con la foto -- solo se invoca con 2 a 5 candidatas
+    # confirmadas por el catálogo (ver `CardResolver._intentar_desempate`).
+    resolver = CardResolver(
+        catalog,
+        request.app.state.pool.connection,
+        recognition=recognition,
+        http_client=http_client,
+    )
     return IdentificationService(
         storage, recognition, resolver, request.app.state.pool.connection, http_client
     )

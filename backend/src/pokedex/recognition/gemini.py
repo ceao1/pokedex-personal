@@ -14,6 +14,7 @@ import httpx
 from pydantic import ValidationError
 
 from .models import Recognition
+from .ports import CandidataImagen
 
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -60,6 +61,26 @@ con certeza.
 
 Devuelve únicamente el objeto JSON, sin explicación ni formato adicional."""
 
+# Task 3 (desempate por imagen): solo se usa cuando el catálogo dejó entre
+# 2 y 5 candidatas confirmadas que no se distinguen por nombre ni dexId --
+# el número y el set ya están decididos, lo único que falta es CUÁL de esas
+# cartas reales es la de la foto.
+_PROMPT_DESEMPATE = """Sos un identificador de cartas del Juego de Cartas Coleccionables \
+Pokémon. La primera imagen es la foto de una carta física. Las imágenes \
+siguientes son candidatas del catálogo -- cada una precedida por un texto \
+"Candidata: <id>" con su identificador -- y ya sabemos que la carta de la \
+foto es alguna de ellas (mismo número de colección, mismo Pokémon): la \
+duda es solo cuál, porque pueden distinguirse por detalles de impresión, \
+ilustración o acabado que no siempre se ven iguales en una foto.
+
+Devuelve SOLO un objeto JSON con una clave "card_id": el identificador \
+(tal cual aparece en "Candidata: <id>") de la que coincide con la foto, o \
+null si ninguna coincide con certeza. Preferí "null" a adivinar: elegir mal \
+es peor que pedir revisión manual, porque un desempate equivocado no lo \
+revisaría nadie.
+
+Devuelve únicamente el objeto JSON, sin explicación ni formato adicional."""
+
 
 class GeminiRecognition:
     def __init__(self, api_key: str, model: str, client: httpx.AsyncClient) -> None:
@@ -103,6 +124,40 @@ class GeminiRecognition:
             raise GeminiRequestError(exc.response.status_code) from None
         text = _extract_text(response.json())
         return _parse(text)
+
+    async def elegir_entre(self, foto: bytes, candidatas: list[CandidataImagen]) -> str | None:
+        # `image/jpeg` para la foto del dueño: `CaptureService._front_path`
+        # siempre guarda `front.jpg` (ver `collection/repository.py`), así
+        # que no hace falta que el llamador mande el mime type acá -- a
+        # diferencia de `identify`, que sí lo recibe porque ahí sí puede
+        # variar. `image/png` para las candidatas: es lo que construye
+        # `catalog.tcgdex.build_image_url` para el arte de cada carta.
+        parts: list[dict] = [
+            {"text": _PROMPT_DESEMPATE},
+            {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(foto).decode()}},
+        ]
+        for candidata in candidatas:
+            parts.append({"text": f"Candidata: {candidata.card_id}"})
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": base64.b64encode(candidata.image).decode("ascii"),
+                    }
+                }
+            )
+        url = _ENDPOINT.format(model=self._model)
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }
+        try:
+            response = await self._client.post(url, params={"key": self._api_key}, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise GeminiRequestError(exc.response.status_code) from None
+        text = _extract_text(response.json())
+        return _parse_card_id(text)
 
 
 class GeminiRequestError(Exception):
@@ -152,16 +207,44 @@ def _parse(text: str) -> Recognition:
         return Recognition(needs_review=True, confidence=0.0, raw=data)
 
 
+def _parse_card_id(text: str) -> str | None:
+    """Parsea la respuesta de `elegir_entre`. Cualquier cosa que no sea un
+    `card_id` de tipo string -- JSON inválido, `null` explícito, un tipo
+    raro -- se trata como "no elegí": cae a revisión manual, nunca a una
+    alucinación (el llamador, `CardResolver`, además verifica que el id
+    devuelto esté entre las candidatas que se le pasaron)."""
+    cleaned = _FENCE_RE.sub("", text.strip())
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    card_id = data.get("card_id")
+    return card_id if isinstance(card_id, str) else None
+
+
 class FakeRecognition:
     """Doble de `RecognitionPort` para tests: no pega a la red."""
 
-    def __init__(self, result: Recognition | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: Recognition | None = None,
+        error: Exception | None = None,
+        elegir_resultado: str | None = None,
+    ) -> None:
         self.result = result if result is not None else Recognition()
         self.error = error
+        self.elegir_resultado = elegir_resultado
         self.calls: list[tuple[bytes, str]] = []
+        self.elegir_calls: list[tuple[bytes, list[CandidataImagen]]] = []
 
     async def identify(self, image: bytes, mime_type: str) -> Recognition:
         self.calls.append((image, mime_type))
         if self.error is not None:
             raise self.error
         return self.result
+
+    async def elegir_entre(self, foto: bytes, candidatas: list[CandidataImagen]) -> str | None:
+        self.elegir_calls.append((foto, candidatas))
+        return self.elegir_resultado

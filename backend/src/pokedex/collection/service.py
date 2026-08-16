@@ -240,5 +240,9 @@ class IdentificationService:
         mime_type = content_type if content_type.startswith("image/") else "image/jpeg"
 
         reconocido = await self._recognition.identify(image, mime_type)
-        resolucion = await self._resolver.resolver(reconocido)
+        # `image` (la foto ya descargada) viaja también al resolutor: es lo
+        # que necesita el desempate por imagen (task 3, `CardResolver.
+        # _intentar_desempate`) cuando el catálogo deja entre 2 y 5
+        # candidatas confirmadas sin que nombre/dexId alcance para elegir.
+        resolucion = await self._resolver.resolver(reconocido, image)
         return IdentificationResult(reconocido=reconocido, resolucion=resolucion)
