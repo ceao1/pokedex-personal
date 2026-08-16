@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from pokedex.catalog.models import CardRef
@@ -141,6 +142,68 @@ async def test_resolve_gallery_row_sin_numero_queda_sin_resolver():
         GalleryRow(dex_number=2, pokemon_name="Ivysaur", raw_text="Ivysaur Southern Islands")
     )
     assert resuelto.card_id is None
+
+
+async def test_un_error_de_red_marca_inalcanzable_no_sin_resolver():
+    """Distinto de 'no existe': el catálogo no pudo ni responder."""
+
+    class FakeCatalogCaido(FakeCatalog):
+        async def find_by_set_and_number(self, set_id, local_id):
+            raise httpx.ConnectTimeout("caído")
+
+    resolver = OptionResolver(FakeCatalogCaido())
+    resueltas = await resolver.resolve_row(_row(1, "Bulbasaur", opcion_1="Bulbasaur 001/165"))
+    op1 = next(o for o in resueltas if o.source_option == "opcion_1")
+    assert op1.card_id is None
+    assert op1.unreachable is True
+
+
+async def test_un_5xx_tambien_marca_inalcanzable():
+    class FakeCatalog5xx(FakeCatalog):
+        async def find_by_set_and_number(self, set_id, local_id):
+            request = httpx.Request("GET", "https://x/cards/1")
+            response = httpx.Response(502, request=request)
+            raise httpx.HTTPStatusError("502", request=request, response=response)
+
+    resolver = OptionResolver(FakeCatalog5xx())
+    resueltas = await resolver.resolve_row(_row(1, "Bulbasaur", opcion_1="Bulbasaur 001/165"))
+    op1 = next(o for o in resueltas if o.source_option == "opcion_1")
+    assert op1.card_id is None
+    assert op1.unreachable is True
+
+
+async def test_un_4xx_no_se_confunde_con_inalcanzable_y_se_propaga():
+    class FakeCatalog4xx(FakeCatalog):
+        async def find_by_set_and_number(self, set_id, local_id):
+            request = httpx.Request("GET", "https://x/cards/1")
+            response = httpx.Response(400, request=request)
+            raise httpx.HTTPStatusError("400", request=request, response=response)
+
+    resolver = OptionResolver(FakeCatalog4xx())
+    with pytest.raises(httpx.HTTPStatusError):
+        await resolver.resolve_row(_row(1, "Bulbasaur", opcion_1="Bulbasaur 001/165"))
+
+
+async def test_list_set_cards_inalcanzable_marca_la_opcion_3():
+    class FakeCatalogVintageCaido(FakeCatalog):
+        async def list_set_cards(self, set_id):
+            raise httpx.ConnectError("caído")
+
+    resolver = OptionResolver(FakeCatalogVintageCaido())
+    resueltas = await resolver.resolve_row(_row(6, "Charizard", opcion_3="Charizard Base Set"))
+    op3 = next(o for o in resueltas if o.source_option == "opcion_3")
+    assert op3.card_id is None
+    assert op3.unreachable is True
+
+
+async def test_una_respuesta_real_de_no_existe_no_se_confunde_con_inalcanzable():
+    """El caso `None`/lista vacía (el catálogo sí respondió) debe seguir
+    marcando `unreachable=False`, para que las dos rutas no se mezclen."""
+    resolver = OptionResolver(FakeCatalog())
+    resueltas = await resolver.resolve_row(_row(9, "Blastoise", opcion_1="Blastoise 900/165"))
+    op1 = next(o for o in resueltas if o.source_option == "opcion_1")
+    assert op1.card_id is None
+    assert op1.unreachable is False
 
 
 async def test_la_opcion_3_resuelve_por_nombre_dentro_del_set_vintage():

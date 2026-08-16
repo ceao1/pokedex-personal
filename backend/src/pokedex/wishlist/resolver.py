@@ -9,6 +9,7 @@ opción 4 son nueve casos sueltos de sets modernos.
 import re
 from decimal import Decimal
 
+import httpx
 from pydantic import BaseModel
 
 from pokedex.catalog.models import CardRef
@@ -38,6 +39,17 @@ VINTAGE_SETS: dict[str, tuple[str, bool]] = {
     "Black Star Promo": ("basep", False),
 }
 
+# El catálogo no pudo responder -- distinto de que haya respondido "no
+# existe". `find_by_set_and_number`/`list_set_cards`/`get_card` propagan
+# estas excepciones cuando la red falla; un 5xx (el servidor respondió, mal)
+# cuenta igual. Un 404 no entra acá: la adaptación de TCGdex ya lo traduce a
+# `None`, que sí es una respuesta real (ver `_resolve_numbered`).
+CATALOG_NETWORK_ERRORS = (httpx.ConnectTimeout, httpx.ConnectError, httpx.ReadTimeout)
+
+
+def es_error_de_servidor(exc: httpx.HTTPStatusError) -> bool:
+    return exc.response.status_code >= 500
+
 
 class ResolvedOption(BaseModel):
     source_option: str
@@ -46,6 +58,12 @@ class ResolvedOption(BaseModel):
     variant_label: str | None = None
     reference_value_usd: Decimal | None = None
     auto_resolved: bool = False
+    # El catálogo no pudo responder (timeout, error de conexión, 5xx) a esta
+    # pregunta -- distinto de `card_id is None` por una respuesta real de
+    # "no existe". El llamador (ImportService) no debe guardar nada cuando
+    # esto es True: guardarlo como no resuelto duplicaría la fila el día que
+    # una corrida posterior sí logre resolver (ver service.py).
+    unreachable: bool = False
 
 
 class OptionResolver:
@@ -86,7 +104,16 @@ class OptionResolver:
         # El Excel escribe "1/165" y "001/165" indistintamente; TCGdex usa
         # el localId con tres dígitos en este set.
         local_id = match.group(1).zfill(3)
-        card = await self._catalog.find_by_set_and_number(SET_151, local_id)
+        try:
+            card = await self._catalog.find_by_set_and_number(SET_151, local_id)
+        except CATALOG_NETWORK_ERRORS:
+            base.unreachable = True
+            return base
+        except httpx.HTTPStatusError as exc:
+            if not es_error_de_servidor(exc):
+                raise
+            base.unreachable = True
+            return base
         if card is None:
             return base
         base.card_id = card.id
@@ -115,9 +142,9 @@ class OptionResolver:
                     variant_label=VariantLabel.REVERSE.value,
                     reference_value_usd=option.reference_value_usd,
                 )
-            # La opción 1 no resolvió (número no encontrado en el set 151);
-            # como último recurso, intentamos resolver el reverse por su
-            # propio número.
+            # La opción 1 no resolvió (número no encontrado, o el catálogo
+            # estaba inalcanzable); como último recurso, intentamos resolver
+            # el reverse por su propio número.
             return await self._resolve_numbered(option, VariantLabel.REVERSE)
         return await self._resolve_numbered(option, VariantLabel.HOLO)
 
@@ -154,7 +181,17 @@ class OptionResolver:
             return base
         set_id, _pide_holo = VINTAGE_SETS[sufijo]
 
-        cards = await self._set_cards(set_id)
+        try:
+            cards = await self._set_cards(set_id)
+        except CATALOG_NETWORK_ERRORS:
+            base.unreachable = True
+            return base
+        except httpx.HTTPStatusError as exc:
+            if not es_error_de_servidor(exc):
+                raise
+            base.unreachable = True
+            return base
+
         coincidencias = [c for c in cards if c.name.casefold() == pokemon_name.casefold()]
         if len(coincidencias) != 1:
             # Cero coincidencias, o varias impresiones del mismo Pokémon en el
@@ -175,6 +212,12 @@ class OptionResolver:
         return resto if resto in VINTAGE_SETS else None
 
     async def _set_cards(self, set_id: str) -> list[CardRef]:
+        """Puede lanzar `CATALOG_NETWORK_ERRORS` o `httpx.HTTPStatusError`
+        (5xx): a propósito, no se atrapan acá. Solo se cachean los éxitos --
+        cachear una falla congelaría "inalcanzable" para el resto de la
+        corrida aunque una llamada posterior al mismo set sí hubiera
+        funcionado, y este módulo no reintenta ni recuerda fallas (esa
+        decisión es de quien llama, no de este cache)."""
         if set_id not in self._set_cache:
             self._set_cache[set_id] = await self._catalog.list_set_cards(set_id)
         return self._set_cache[set_id]

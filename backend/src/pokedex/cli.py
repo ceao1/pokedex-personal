@@ -50,8 +50,17 @@ async def _import_excel(path: str) -> int:
         f"Pokémon sembrados: {summary.pokemon}\n"
         f"Items creados: {summary.items_creados}\n"
         f"Items ya existentes: {summary.items_actualizados}\n"
-        f"Opciones sin resolver: {summary.sin_resolver}"
+        f"Opciones sin resolver: {summary.sin_resolver}\n"
+        f"Opciones saltadas por catálogo inalcanzable: {summary.catalogo_inalcanzable}"
     )
+    if summary.catalogo_inalcanzable > 0:
+        print(
+            "\nImport parcial: el catálogo (TCGdex) no respondió para "
+            f"{summary.catalogo_inalcanzable} opciones. No se guardó nada a medias "
+            "-- esas opciones se saltaron por completo. Volvé a correr este mismo "
+            "comando cuando el catálogo esté disponible para completarlas; lo ya "
+            "resuelto no se toca."
+        )
     return 0
 
 
